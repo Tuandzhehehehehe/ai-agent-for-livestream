@@ -1,0 +1,64 @@
+{
+  "metadata": {
+    "record_type": "products",
+    "data_origin": "synthetic",
+    "dataset_label": "SYNTHETIC DEMO DATA",
+    "notice": "Fictional product information, prices, and inventory for software tests only."
+  },
+  "records": [
+    {
+      "id": "SYN-PROD-001",
+      "name": "LumaNest Desk Lamp",
+      "description": "A fictional adjustable desk lamp with a warm reading mode and a compact base.",
+      "price": 24.5,
+      "stock_quantity": 12,
+      "category": "lighting",
+      "attributes": {"color": "mist green", "light_modes": 3, "demo_item": true}
+    },
+    {
+      "id": "SYN-PROD-002",
+      "name": "Pebblebrook Ceramic Mug",
+      "description": "A fictional stoneware-style mug used in the synthetic homeware catalog.",
+      "price": 14.0,
+      "stock_quantity": 40,
+      "category": "drinkware",
+      "attributes": {"color": "cloud white", "capacity_ml": 320}
+    },
+    {
+      "id": "SYN-PROD-003",
+      "name": "Kettle Fern Mini Kettle",
+      "description": "A fictional small countertop kettle with a removable demo filter.",
+      "price": 39.99,
+      "stock_quantity": 7,
+      "category": "kitchen",
+      "attributes": {"capacity_l": 1.0, "color": "fern green"}
+    },
+    {
+      "id": "SYN-PROD-004",
+      "name": "Cloudstep Canvas Tote",
+      "description": "A fictional reusable canvas tote for examples in the accessories category.",
+      "price": 9.5,
+      "stock_quantity": 0,
+      "category": "accessories",
+      "attributes": {"color": "deep teal", "material": "cotton canvas"}
+    },
+    {
+      "id": "SYN-PROD-005",
+      "name": "Northstar Knit Scarf",
+      "description": "A fictional soft knit scarf included as a synthetic apparel example.",
+      "price": 18.0,
+      "stock_quantity": 23,
+      "category": "apparel",
+      "attributes": {"color": "berry red", "material": "demo knit blend"}
+    },
+    {
+      "id": "SYN-PROD-006",
+      "name": "Morrow USB Desk Charger",
+      "description": "A fictional two-port desk charger included for keyword search examples.",
+      "price": 12.99,
+      "stock_quantity": 16,
+      "category": "electronics",
+      "attributes": {"ports": 2, "color": "charcoal"}
+    }
+  ]
+}

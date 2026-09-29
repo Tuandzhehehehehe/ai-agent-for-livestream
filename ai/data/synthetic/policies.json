@@ -1,0 +1,38 @@
+{
+  "metadata": {
+    "record_type": "policies",
+    "data_origin": "synthetic",
+    "dataset_label": "SYNTHETIC DEMO DATA",
+    "notice": "All policy examples are fictional and are not real business policies."
+  },
+  "records": [
+    {
+      "id": "SYN-POLICY-SHIPPING-001",
+      "category": "shipping",
+      "content": "Synthetic demo rule: sample orders are described as dispatching within three simulated business days. This is not a real shipping promise.",
+      "status": "effective",
+      "version": "1.0.0"
+    },
+    {
+      "id": "SYN-POLICY-RETURNS-001",
+      "category": "returns",
+      "content": "Synthetic demo rule: an example return request may be reviewed within fourteen simulated days of delivery. This is not a real return policy.",
+      "status": "effective",
+      "version": "1.0.0"
+    },
+    {
+      "id": "SYN-POLICY-PROMOTIONS-001",
+      "category": "promotions",
+      "content": "Synthetic demo rule: no active sample promotion is defined. Do not infer discounts from this record.",
+      "status": "effective",
+      "version": "1.1"
+    },
+    {
+      "id": "SYN-POLICY-WARRANTY-OLD",
+      "category": "warranty",
+      "content": "Synthetic demo archive: a fictional six-month sample warranty was superseded and is inactive.",
+      "status": "inactive",
+      "version": "0.9.0"
+    }
+  ]
+}

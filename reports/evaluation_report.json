@@ -1,0 +1,566 @@
+{
+  "case_counts": {
+    "comment_classification": 13,
+    "customer_qa": 19,
+    "duplicate_cases_total": 2,
+    "human_review_expected_total": 20,
+    "intent_classification_total": 32,
+    "operations": 6,
+    "unsupported_evidence_total": 11
+  },
+  "cases": {
+    "comment_classification": [
+      {
+        "actual_intent": "product_information",
+        "actual_needs_human_review": false,
+        "case_id": "comment-product",
+        "expected_intent": "product_information",
+        "expected_needs_human_review": false,
+        "passed": true
+      },
+      {
+        "actual_intent": "price_question",
+        "actual_needs_human_review": false,
+        "case_id": "comment-price",
+        "expected_intent": "price_question",
+        "expected_needs_human_review": false,
+        "passed": true
+      },
+      {
+        "actual_intent": "stock_question",
+        "actual_needs_human_review": false,
+        "case_id": "comment-stock",
+        "expected_intent": "stock_question",
+        "expected_needs_human_review": false,
+        "passed": true
+      },
+      {
+        "actual_intent": "shipping_policy",
+        "actual_needs_human_review": false,
+        "case_id": "comment-shipping",
+        "expected_intent": "shipping_policy",
+        "expected_needs_human_review": false,
+        "passed": true
+      },
+      {
+        "actual_intent": "return_policy",
+        "actual_needs_human_review": false,
+        "case_id": "comment-return-info",
+        "expected_intent": "return_policy",
+        "expected_needs_human_review": false,
+        "passed": true
+      },
+      {
+        "actual_intent": "promotion_question",
+        "actual_needs_human_review": false,
+        "case_id": "comment-promotion",
+        "expected_intent": "promotion_question",
+        "expected_needs_human_review": false,
+        "passed": true
+      },
+      {
+        "actual_intent": "complaint",
+        "actual_needs_human_review": true,
+        "case_id": "comment-complaint",
+        "expected_intent": "complaint",
+        "expected_needs_human_review": true,
+        "passed": true
+      },
+      {
+        "actual_intent": "refund_request",
+        "actual_needs_human_review": true,
+        "case_id": "comment-refund",
+        "expected_intent": "refund_request",
+        "expected_needs_human_review": true,
+        "passed": true
+      },
+      {
+        "actual_intent": "price_change_request",
+        "actual_needs_human_review": true,
+        "case_id": "comment-price-change",
+        "expected_intent": "price_change_request",
+        "expected_needs_human_review": true,
+        "passed": true
+      },
+      {
+        "actual_intent": "consequential_action",
+        "actual_needs_human_review": true,
+        "case_id": "comment-order-action",
+        "expected_intent": "consequential_action",
+        "expected_needs_human_review": true,
+        "passed": true
+      },
+      {
+        "actual_intent": "spam_or_irrelevant",
+        "actual_needs_human_review": false,
+        "case_id": "comment-spam",
+        "expected_intent": "spam_or_irrelevant",
+        "expected_needs_human_review": false,
+        "passed": true
+      },
+      {
+        "actual_intent": "prompt_injection",
+        "actual_needs_human_review": true,
+        "case_id": "comment-injection",
+        "expected_intent": "prompt_injection",
+        "expected_needs_human_review": true,
+        "passed": true
+      },
+      {
+        "actual_intent": "unknown",
+        "actual_needs_human_review": true,
+        "case_id": "comment-unknown",
+        "expected_intent": "unknown",
+        "expected_needs_human_review": true,
+        "passed": true
+      }
+    ],
+    "customer_qa": [
+      {
+        "actual_intent": "product_information",
+        "actual_source_ids": [
+          "SYN-FAQ-001"
+        ],
+        "actual_status": "answered",
+        "case_id": "qa-product-faq",
+        "expected_intent": "product_information",
+        "expected_source_ids": [
+          "SYN-FAQ-001"
+        ],
+        "expected_status": "answered",
+        "passed": true,
+        "source_references_valid": true
+      },
+      {
+        "actual_intent": "price_question",
+        "actual_source_ids": [
+          "SYN-PROD-001"
+        ],
+        "actual_status": "answered",
+        "case_id": "qa-price",
+        "expected_intent": "price_question",
+        "expected_source_ids": [
+          "SYN-PROD-001"
+        ],
+        "expected_status": "answered",
+        "passed": true,
+        "source_references_valid": true
+      },
+      {
+        "actual_intent": "stock_question",
+        "actual_source_ids": [
+          "SYN-PROD-001"
+        ],
+        "actual_status": "answered",
+        "case_id": "qa-stock",
+        "expected_intent": "stock_question",
+        "expected_source_ids": [
+          "SYN-PROD-001"
+        ],
+        "expected_status": "answered",
+        "passed": true,
+        "source_references_valid": true
+      },
+      {
+        "actual_intent": "shipping_policy",
+        "actual_source_ids": [
+          "SYN-POLICY-SHIPPING-001"
+        ],
+        "actual_status": "answered",
+        "case_id": "qa-shipping-policy",
+        "expected_intent": "shipping_policy",
+        "expected_source_ids": [
+          "SYN-POLICY-SHIPPING-001"
+        ],
+        "expected_status": "answered",
+        "passed": true,
+        "source_references_valid": true
+      },
+      {
+        "actual_intent": "return_policy",
+        "actual_source_ids": [
+          "SYN-POLICY-RETURNS-001"
+        ],
+        "actual_status": "answered",
+        "case_id": "qa-return-policy",
+        "expected_intent": "return_policy",
+        "expected_source_ids": [
+          "SYN-POLICY-RETURNS-001"
+        ],
+        "expected_status": "answered",
+        "passed": true,
+        "source_references_valid": true
+      },
+      {
+        "actual_intent": "price_question",
+        "actual_source_ids": [],
+        "actual_status": "needs_review",
+        "case_id": "qa-unknown-product",
+        "expected_intent": "price_question",
+        "expected_source_ids": [],
+        "expected_status": "needs_review",
+        "passed": true,
+        "source_references_valid": true
+      },
+      {
+        "actual_intent": "shipping_policy",
+        "actual_source_ids": [],
+        "actual_status": "needs_review",
+        "case_id": "qa-missing-policy",
+        "expected_intent": "shipping_policy",
+        "expected_source_ids": [],
+        "expected_status": "needs_review",
+        "passed": true,
+        "source_references_valid": true
+      },
+      {
+        "actual_intent": "unknown",
+        "actual_source_ids": [],
+        "actual_status": "needs_review",
+        "case_id": "qa-empty-question",
+        "expected_intent": "unknown",
+        "expected_source_ids": [],
+        "expected_status": "needs_review",
+        "passed": true,
+        "source_references_valid": true
+      },
+      {
+        "actual_intent": "shipping_policy",
+        "actual_source_ids": [],
+        "actual_status": "needs_review",
+        "case_id": "qa-inactive-policy",
+        "expected_intent": "shipping_policy",
+        "expected_source_ids": [],
+        "expected_status": "needs_review",
+        "passed": true,
+        "source_references_valid": true
+      },
+      {
+        "actual_intent": "refund_request",
+        "actual_source_ids": [],
+        "actual_status": "needs_review",
+        "case_id": "qa-refund-request",
+        "expected_intent": "refund_request",
+        "expected_source_ids": [],
+        "expected_status": "needs_review",
+        "passed": true,
+        "source_references_valid": true
+      },
+      {
+        "actual_intent": "price_change_request",
+        "actual_source_ids": [],
+        "actual_status": "needs_review",
+        "case_id": "qa-price-change",
+        "expected_intent": "price_change_request",
+        "expected_source_ids": [],
+        "expected_status": "needs_review",
+        "passed": true,
+        "source_references_valid": true
+      },
+      {
+        "actual_intent": "promotion_question",
+        "actual_source_ids": [
+          "SYN-POLICY-PROMOTIONS-001"
+        ],
+        "actual_status": "needs_review",
+        "case_id": "qa-specific-promotion",
+        "expected_intent": "promotion_question",
+        "expected_source_ids": [
+          "SYN-POLICY-PROMOTIONS-001"
+        ],
+        "expected_status": "needs_review",
+        "passed": true,
+        "source_references_valid": true
+      },
+      {
+        "actual_intent": "prompt_injection",
+        "actual_source_ids": [],
+        "actual_status": "needs_review",
+        "case_id": "qa-prompt-injection",
+        "expected_intent": "prompt_injection",
+        "expected_source_ids": [],
+        "expected_status": "needs_review",
+        "passed": true,
+        "source_references_valid": true
+      },
+      {
+        "actual_intent": "shipping_policy",
+        "actual_source_ids": [
+          "EVAL-POLICY-SHIP-A",
+          "EVAL-POLICY-SHIP-B"
+        ],
+        "actual_status": "needs_review",
+        "case_id": "qa-conflicting-policy",
+        "expected_intent": "shipping_policy",
+        "expected_source_ids": [
+          "EVAL-POLICY-SHIP-A",
+          "EVAL-POLICY-SHIP-B"
+        ],
+        "expected_status": "needs_review",
+        "passed": true,
+        "source_references_valid": true
+      },
+      {
+        "actual_intent": "price_question",
+        "actual_source_ids": [
+          "EVAL-FAQ-PRICE-CONFLICT",
+          "SYN-PROD-001"
+        ],
+        "actual_status": "needs_review",
+        "case_id": "qa-conflicting-price",
+        "expected_intent": "price_question",
+        "expected_source_ids": [
+          "EVAL-FAQ-PRICE-CONFLICT",
+          "SYN-PROD-001"
+        ],
+        "expected_status": "needs_review",
+        "passed": true,
+        "source_references_valid": true
+      },
+      {
+        "actual_intent": "product_information",
+        "actual_source_ids": [
+          "SYN-PROD-001"
+        ],
+        "actual_status": "needs_review",
+        "case_id": "qa-unsupported-product-detail",
+        "expected_intent": "product_information",
+        "expected_source_ids": [
+          "SYN-PROD-001"
+        ],
+        "expected_status": "needs_review",
+        "passed": true,
+        "source_references_valid": true
+      },
+      {
+        "actual_intent": "shipping_policy",
+        "actual_source_ids": [
+          "SYN-POLICY-SHIPPING-001"
+        ],
+        "actual_status": "needs_review",
+        "case_id": "qa-shipping-fee",
+        "expected_intent": "shipping_policy",
+        "expected_source_ids": [
+          "SYN-POLICY-SHIPPING-001"
+        ],
+        "expected_status": "needs_review",
+        "passed": true,
+        "source_references_valid": true
+      },
+      {
+        "actual_intent": "return_policy",
+        "actual_source_ids": [
+          "SYN-POLICY-RETURNS-001"
+        ],
+        "actual_status": "needs_review",
+        "case_id": "qa-return-duration",
+        "expected_intent": "return_policy",
+        "expected_source_ids": [
+          "SYN-POLICY-RETURNS-001"
+        ],
+        "expected_status": "needs_review",
+        "passed": true,
+        "source_references_valid": true
+      },
+      {
+        "actual_intent": "shipping_policy",
+        "actual_source_ids": [
+          "SYN-POLICY-SHIPPING-001"
+        ],
+        "actual_status": "needs_review",
+        "case_id": "qa-shipping-date",
+        "expected_intent": "shipping_policy",
+        "expected_source_ids": [
+          "SYN-POLICY-SHIPPING-001"
+        ],
+        "expected_status": "needs_review",
+        "passed": true,
+        "source_references_valid": true
+      }
+    ],
+    "operations": [
+      {
+        "actual_comment_count": 5,
+        "actual_duplicate_comment_count": 0,
+        "actual_duplicate_event_count": 0,
+        "actual_error": null,
+        "actual_event_count": 4,
+        "actual_recommendation_count": 4,
+        "case_id": "ops-aggregation-traceability",
+        "checks": {
+          "comment_count": true,
+          "duplicate_comment_count": true,
+          "duplicate_event_count": true,
+          "event_count": true,
+          "expected_error_absent": true,
+          "frequent_questions": true,
+          "recommendation_count": true,
+          "recommendations_traceable": true,
+          "recurring_issues": true,
+          "summary_sources_traceable": true
+        },
+        "expected_error": null,
+        "passed": true
+      },
+      {
+        "actual_comment_count": 1,
+        "actual_duplicate_comment_count": 1,
+        "actual_duplicate_event_count": 1,
+        "actual_error": null,
+        "actual_event_count": 1,
+        "actual_recommendation_count": 1,
+        "case_id": "ops-identical-duplicates",
+        "checks": {
+          "comment_count": true,
+          "duplicate_comment_count": true,
+          "duplicate_event_count": true,
+          "event_count": true,
+          "expected_error_absent": true,
+          "frequent_questions": true,
+          "recommendation_count": true,
+          "recommendations_traceable": true,
+          "recurring_issues": true,
+          "summary_sources_traceable": true
+        },
+        "expected_error": null,
+        "passed": true
+      },
+      {
+        "actual_comment_count": 0,
+        "actual_duplicate_comment_count": 0,
+        "actual_duplicate_event_count": 0,
+        "actual_error": null,
+        "actual_event_count": 0,
+        "actual_recommendation_count": 0,
+        "case_id": "ops-empty-input",
+        "checks": {
+          "comment_count": true,
+          "duplicate_comment_count": true,
+          "duplicate_event_count": true,
+          "event_count": true,
+          "expected_error_absent": true,
+          "frequent_questions": true,
+          "recommendation_count": true,
+          "recommendations_traceable": true,
+          "recurring_issues": true,
+          "summary_sources_traceable": true
+        },
+        "expected_error": null,
+        "passed": true
+      },
+      {
+        "actual_error": "OperationsInputError",
+        "case_id": "ops-conflicting-duplicate-rejected",
+        "expected_error": "OperationsInputError",
+        "passed": true
+      },
+      {
+        "actual_error": "OperationsInputError",
+        "case_id": "ops-malformed-event-rejected",
+        "expected_error": "OperationsInputError",
+        "passed": true
+      },
+      {
+        "actual_comment_count": 0,
+        "actual_duplicate_comment_count": 0,
+        "actual_duplicate_event_count": 0,
+        "actual_error": null,
+        "actual_event_count": 1,
+        "actual_recommendation_count": 0,
+        "case_id": "ops-unknown-event-no-recommendation",
+        "checks": {
+          "comment_count": true,
+          "duplicate_comment_count": true,
+          "duplicate_event_count": true,
+          "event_count": true,
+          "expected_error_absent": true,
+          "frequent_questions": true,
+          "recommendation_count": true,
+          "recommendations_traceable": true,
+          "recurring_issues": true,
+          "summary_sources_traceable": true
+        },
+        "expected_error": null,
+        "passed": true
+      }
+    ]
+  },
+  "catalog": "existing labeled synthetic demo catalog; evaluation scenarios remain separate",
+  "data_origin": "synthetic",
+  "evaluation_id": "SYN-EVAL-PHASE5-001",
+  "limitations": [
+    "Scenario labels are hand-authored synthetic expected outcomes.",
+    "The existing demonstration catalog is fictional; passing it does not validate real business facts.",
+    "Intent accuracy measures only the included English keyword cases and is not general-world accuracy.",
+    "Unsupported-answer rate is conditional on the explicitly tagged unsupported-evidence cases only.",
+    "Prompt-injection cases cover known patterns and do not establish complete injection resistance.",
+    "No latency, production traffic, or human reviewer agreement was measured."
+  ],
+  "metrics": {
+    "customer_qa_outcome_accuracy": {
+      "definition": "Cases matching expected intent, status, review flag, source IDs, and required answer fragments.",
+      "denominator": 19,
+      "numerator": 19,
+      "target": null,
+      "value": 1.0
+    },
+    "duplicate_handling_correctness": {
+      "definition": "Duplicate-specific cases correctly deduplicated identical records or rejected conflicting IDs.",
+      "denominator": 2,
+      "numerator": 2,
+      "target": null,
+      "value": 1.0
+    },
+    "human_review_escalation_recall": {
+      "definition": "Expected-review synthetic cases that actually returned needs_review or needs_human_review.",
+      "denominator": 20,
+      "numerator": 20,
+      "target": null,
+      "value": 1.0
+    },
+    "intent_classification_accuracy": {
+      "definition": "Correct expected intent labels across customer Q&A and operations comment cases.",
+      "denominator": 32,
+      "numerator": 32,
+      "target": null,
+      "value": 1.0
+    },
+    "operations_case_accuracy": {
+      "definition": "Operations scenarios matching expected summaries, aggregation, recommendations, errors, and traceability checks.",
+      "denominator": 6,
+      "numerator": 6,
+      "target": null,
+      "value": 1.0
+    },
+    "operations_recommendation_source_traceability": {
+      "definition": "Recommendation source references resolving to supplied comment/event IDs.",
+      "denominator": 7,
+      "numerator": 7,
+      "target": null,
+      "value": 1.0
+    },
+    "operations_summary_source_traceability": {
+      "definition": "Top-level summary source references resolving to supplied unique comment/event IDs.",
+      "denominator": 12,
+      "numerator": 12,
+      "target": null,
+      "value": 1.0
+    },
+    "source_reference_coverage": {
+      "definition": "Answered Q&A results with at least one source ID resolving to a product, FAQ, or policy in the selected synthetic dataset variant.",
+      "denominator": 5,
+      "numerator": 5,
+      "target": null,
+      "value": 1.0
+    },
+    "unsupported_answer_rate": {
+      "definition": "Tagged unsupported-evidence Q&A cases that nevertheless returned status=answered.",
+      "denominator": 11,
+      "numerator": 0,
+      "target": null,
+      "value": 0.0
+    }
+  },
+  "report_version": 1,
+  "scope_note": "These are curated deterministic golden cases, not a representative sample of real customer traffic."
+}

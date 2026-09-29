@@ -1,0 +1,66 @@
+{
+  "metadata": {
+    "record_type": "faqs",
+    "data_origin": "synthetic",
+    "dataset_label": "SYNTHETIC DEMO DATA",
+    "notice": "Fictional FAQ content for software tests only; not real seller guidance."
+  },
+  "records": [
+    {
+      "id": "SYN-FAQ-001",
+      "question": "What color is the LumaNest Desk Lamp?",
+      "answer": "The synthetic catalog lists the LumaNest Desk Lamp in mist green.",
+      "category": "product_details",
+      "product_ids": ["SYN-PROD-001"]
+    },
+    {
+      "id": "SYN-FAQ-002",
+      "question": "How many light modes does the desk lamp have?",
+      "answer": "The demo product record lists three light modes.",
+      "category": "product_details",
+      "product_ids": ["SYN-PROD-001"]
+    },
+    {
+      "id": "SYN-FAQ-003",
+      "question": "What is the mug capacity?",
+      "answer": "The fictional mug example has a listed capacity of 320 ml.",
+      "category": "product_details",
+      "product_ids": ["SYN-PROD-002"]
+    },
+    {
+      "id": "SYN-FAQ-004",
+      "question": "How is shipping handled in this demo?",
+      "answer": "Shipping terms are illustrative only; consult the effective synthetic shipping policy record.",
+      "category": "shipping",
+      "product_ids": []
+    },
+    {
+      "id": "SYN-FAQ-005",
+      "question": "Can a sample item be returned?",
+      "answer": "The demo return example is described in the effective synthetic returns policy.",
+      "category": "returns",
+      "product_ids": []
+    },
+    {
+      "id": "SYN-FAQ-006",
+      "question": "Is there a promotion on the tote?",
+      "answer": "No promotion is specified in the synthetic demo data.",
+      "category": "promotions",
+      "product_ids": ["SYN-PROD-004"]
+    },
+    {
+      "id": "SYN-FAQ-007",
+      "question": "What is the kettle's listed capacity?",
+      "answer": "The fictional kettle example lists a capacity of 1.0 liter.",
+      "category": "product_details",
+      "product_ids": ["SYN-PROD-003"]
+    },
+    {
+      "id": "SYN-FAQ-008",
+      "question": "Where can I find the sample warranty terms?",
+      "answer": "The warranty example is inactive in this synthetic dataset and should not be treated as current guidance.",
+      "category": "warranty",
+      "product_ids": []
+    }
+  ]
+}
