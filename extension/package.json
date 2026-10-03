@@ -1,0 +1,17 @@
+{
+  "name": "shopee-live-ai-copilot",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Chrome Extension Overlay hỗ trợ người bán hàng Shopee Live bằng AI",
+  "scripts": {
+    "test": "echo \"Step 1 completed\""
+  },
+  "keywords": [
+    "shopee",
+    "livestream",
+    "chrome-extension",
+    "ai-agent"
+  ],
+  "author": "",
+  "license": "ISC"
+}
