@@ -9,45 +9,22 @@
   <div class="popup-container">
     <header class="popup-header">
       <div class="logo">
-        <span class="icon">⚡</span>
+        <span class="icon">AI</span>
         <h1>Shopee AI Copilot</h1>
       </div>
       <span class="badge">v1.0</span>
     </header>
 
-    <div class="card status-card">
-      <div class="status-row">
-        <span>Trạng thái kết nối:</span>
-        <span class="status-pill online" id="status-label">● Đang hoạt động</span>
-      </div>
-      <div class="status-sub">Sẵn sàng phân loại comment trên Shopee Live</div>
-    </div>
-
-    <div class="card settings-card">
-      <h3>Cấu hình Backend AI</h3>
-      <div class="field">
-        <label for="backend-url">AI Backend Server URL:</label>
-        <input type="text" id="backend-url" value="http://localhost:8000" placeholder="http://localhost:8000">
-      </div>
-      <div class="toggle-field">
-        <label for="sound-toggle">Âm thanh thông báo:</label>
-        <input type="checkbox" id="sound-toggle" checked>
-      </div>
+    <div class="card">
+      <label for="backend-url">Địa chỉ Backend AI Server:</label>
+      <input type="text" id="backend-url" placeholder="http://localhost:8000">
       <button class="save-btn" id="btn-save">Lưu Cấu Hình</button>
     </div>
 
     <div class="card help-card">
-      <h3>Phím tắt nhanh</h3>
-      <div class="shortcut-list">
-        <div><kbd>Alt</kbd> + <kbd>1</kbd> : Gửi nhanh gợi ý đầu tiên</div>
-        <div><kbd>Alt</kbd> + <kbd>X</kbd> : Ẩn / Hiện thanh Overlay</div>
-      </div>
+      <div class="hint">Phím tắt:</div>
+      <div><kbd>Alt</kbd> + <kbd>1</kbd> : Gửi nhanh gợi ý trên cùng</div>
     </div>
-
-    <footer class="popup-footer">
-      <span>Đồ án AI Agent Livestream</span>
-      <a href="https://live.shopee.vn" target="_blank">Mở Shopee Live ↗</a>
-    </footer>
   </div>
   <script src="popup.js"></script>
 </body>

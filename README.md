@@ -38,6 +38,7 @@ ai/
   operations/        # schemas, classification, aggregation, summary
   __init__.py
 docs/                # kiến trúc, contract tích hợp, evaluation report
+extension/           # Chrome Extension Overlay hỗ trợ Shopee Live
 reports/             # evaluation_report.json
 tests/
     test_customer_qa.py
@@ -111,6 +112,48 @@ print(summary.recommendations)
 
 `summary.recommendations` là gợi ý cần operator xem xét, có `sources`; package không thực hiện hành động.
 
+## Cài đặt và sử dụng Extension Shopee Live
+
+Extension dạng overlay chạy trên trình duyệt (Chrome, Cốc Cốc, Edge) hỗ trợ người bán theo dõi và trả lời bình luận theo thời gian thực trên Shopee Live PC (`live.shopee.vn` hoặc `creator.shopee.vn`).
+
+### 1. Cài đặt vào trình duyệt
+
+1. Mở trình duyệt Chrome, Cốc Cốc hoặc Edge, truy cập:
+   ```text
+   chrome://extensions/
+   ```
+2. Bật công tắc "Developer mode" (Chế độ cho nhà phát triển) ở góc trên bên phải.
+3. Nhấn nút "Load unpacked" (Tải tiện ích đã giải nén).
+4. Chọn thư mục `extension` trong thư mục dự án:
+   ```text
+   /home/Dx/dev/ai-agent-for-livestream/extension
+   ```
+
+### 2. Kết nối Backend AI
+
+Khởi động backend FastAPI:
+
+```bash
+uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload
+```
+
+Nhấn vào biểu tượng extension trên thanh công cụ trình duyệt để mở popup, xác nhận địa chỉ backend server (`http://localhost:8000`) và nhấn "Lưu Cấu Hình".
+
+### 3. Vận hành trên Shopee Live
+
+1. Đăng nhập và mở trang quản trị livestream: `https://live.shopee.vn/pc/setup` hoặc `https://creator.shopee.vn`.
+2. Cửa sổ overlay "Shopee Copilot" sẽ tự động hiển thị ở góc màn hình.
+3. Khi người xem đặt câu hỏi trong phiên live, AI tự động nhận diện và hiển thị câu trả lời gợi ý.
+4. Thao tác phản hồi:
+   - Nhấn "Gửi ngay" (hoặc phím tắt `Alt + 1`) để tự động điền vào ô chat và gửi tin nhắn.
+   - Nhấn "Điền" nếu muốn đưa nội dung vào ô chat để tự chỉnh sửa thủ công trước khi gửi.
+   - Nhấn nút "x" để bỏ qua câu hỏi.
+   - Kéo thả thanh tiêu đề để di chuyển cửa sổ, hoặc nhấn nút "_" để thu nhỏ.
+
+### 4. Cập nhật khi sửa code
+
+Khi chỉnh sửa code trong thư mục `extension/`, vào `chrome://extensions/` và nhấn nút Reload (xoay tròn) trên thẻ tiện ích để cập nhật ngay.
+
 ## Dữ liệu mô phỏng và an toàn
 
 Các file `products.json`, `faqs.json`, `policies.json` được gắn nhãn synthetic/demo. Tên sản phẩm, giá, tồn kho, thời hạn vận chuyển/đổi trả và policy chỉ phục vụ phát triển/kiểm thử; **không phải dữ liệu hoặc cam kết kinh doanh thật**. Không có dữ liệu khách hàng thật.
@@ -123,3 +166,4 @@ Classifier và injection checks dựa trên keyword/pattern tiếng Anh, không 
 - [Contract tích hợp Member 2](docs/AI_INTEGRATION_CONTRACT.md)
 - [Báo cáo evaluation](docs/EVALUATION_REPORT.md)
 - [Báo cáo bàn giao chi tiết](AI_HANDOFF_REPORT.md)
+- [Kế hoạch Extension Overlay Shopee Live](docs/SHOPEE_LIVE_EXTENSION_PLAN.md)
