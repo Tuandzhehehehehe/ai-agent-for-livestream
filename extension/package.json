@@ -1,16 +1,13 @@
 {
-  "name": "shopee-live-ai-copilot",
+  "name": "youtube-live-ai-collector",
   "version": "1.0.0",
   "type": "module",
-  "description": "Chrome Extension Overlay hỗ trợ người bán hàng Shopee Live bằng AI",
-  "scripts": {
-    "test": "echo \"Step 1 completed\""
-  },
+  "description": "Chrome Extension thu thap binh luan livestream YouTube thoi gian thuc ve AI Backend",
   "keywords": [
-    "shopee",
+    "youtube",
     "livestream",
     "chrome-extension",
-    "ai-agent"
+    "comment-collector"
   ],
   "author": "",
   "license": "ISC"

@@ -1,55 +1,26 @@
 {
   "manifest_version": 3,
-  "name": "Shopee Live AI Copilot - Trợ lý Livestream",
+  "name": "YouTube Live Comment Collector",
   "version": "1.0.0",
-  "description": "Overlay thông minh hỗ trợ người bán Shopee Live tự động phân loại và gợi ý trả lời bình luận 1-chạm bằng AI.",
-  "permissions": [
-    "storage",
-    "activeTab"
-  ],
+  "description": "Thu thap binh luan livestream YouTube theo thoi gian thuc ve AI Backend.",
   "host_permissions": [
-    "https://live.shopee.vn/*",
-    "https://creator.shopee.vn/*",
-    "https://seller.shopee.vn/*",
+    "https://*.youtube.com/*",
     "http://localhost:8000/*"
   ],
   "background": {
     "service_worker": "src/background/service_worker.js",
     "type": "module"
   },
-  "action": {
-    "default_popup": "src/popup/popup.html",
-    "default_title": "Shopee Live AI Copilot Settings",
-    "default_icon": {
-      "16": "icons/icon16.png",
-      "48": "icons/icon48.png",
-      "128": "icons/icon128.png"
-    }
-  },
   "content_scripts": [
     {
       "matches": [
-        "https://live.shopee.vn/*",
-        "https://creator.shopee.vn/*",
-        "https://seller.shopee.vn/*"
+        "https://*.youtube.com/*"
       ],
+      "all_frames": true,
       "js": [
         "src/content/content.js"
       ],
-      "run_at": "document_end"
-    }
-  ],
-  "web_accessible_resources": [
-    {
-      "resources": [
-        "src/content/overlay.css",
-        "icons/*"
-      ],
-      "matches": [
-        "https://live.shopee.vn/*",
-        "https://creator.shopee.vn/*",
-        "https://seller.shopee.vn/*"
-      ]
+      "run_at": "document_idle"
     }
   ]
 }

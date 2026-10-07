@@ -38,7 +38,7 @@ ai/
   operations/        # schemas, classification, aggregation, summary
   __init__.py
 docs/                # kiến trúc, contract tích hợp, evaluation report
-extension/           # Chrome Extension Overlay hỗ trợ Shopee Live
+extension/           # Chrome Extension Headless tự động trả lời chat YouTube Live bằng AI
 reports/             # evaluation_report.json
 tests/
     test_customer_qa.py
@@ -112,13 +112,13 @@ print(summary.recommendations)
 
 `summary.recommendations` là gợi ý cần operator xem xét, có `sources`; package không thực hiện hành động.
 
-## Cài đặt và sử dụng Extension Shopee Live
+## Cài đặt và sử dụng Extension YouTube Live
 
-Extension dạng overlay chạy trên trình duyệt (Chrome, Cốc Cốc, Edge) hỗ trợ người bán theo dõi và trả lời bình luận theo thời gian thực trên Shopee Live PC (`live.shopee.vn` hoặc `creator.shopee.vn`).
+Extension chạy ngầm (Headless - không giao diện, **không tự động trả lời vào chat**) trên trình duyệt (Chrome, Brave, Cốc Cốc, Edge) tự động lắng nghe và thu thập bình luận theo thời gian thực từ luồng chat YouTube Live đồng bộ về AI Backend.
 
 ### 1. Cài đặt vào trình duyệt
 
-1. Mở trình duyệt Chrome, Cốc Cốc hoặc Edge, truy cập:
+1. Mở trình duyệt Chrome hoặc Brave, truy cập:
    ```text
    chrome://extensions/
    ```
@@ -129,7 +129,7 @@ Extension dạng overlay chạy trên trình duyệt (Chrome, Cốc Cốc, Edge)
    /home/Dx/dev/ai-agent-for-livestream/extension
    ```
 
-### 2. Kết nối Backend AI
+### 2. Kết nối Backend AI (Tùy chọn)
 
 Khởi động backend FastAPI:
 
@@ -137,18 +137,15 @@ Khởi động backend FastAPI:
 uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-Nhấn vào biểu tượng extension trên thanh công cụ trình duyệt để mở popup, xác nhận địa chỉ backend server (`http://localhost:8000`) và nhấn "Lưu Cấu Hình".
+### 3. Vận hành trên YouTube Live
 
-### 3. Vận hành trên Shopee Live
-
-1. Đăng nhập và mở trang quản trị livestream: `https://live.shopee.vn/pc/setup` hoặc `https://creator.shopee.vn`.
-2. Cửa sổ overlay "Shopee Copilot" sẽ tự động hiển thị ở góc màn hình.
-3. Khi người xem đặt câu hỏi trong phiên live, AI tự động nhận diện và hiển thị câu trả lời gợi ý.
-4. Thao tác phản hồi:
-   - Nhấn "Gửi ngay" (hoặc phím tắt `Alt + 1`) để tự động điền vào ô chat và gửi tin nhắn.
-   - Nhấn "Điền" nếu muốn đưa nội dung vào ô chat để tự chỉnh sửa thủ công trước khi gửi.
-   - Nhấn nút "x" để bỏ qua câu hỏi.
-   - Kéo thả thanh tiêu đề để di chuyển cửa sổ, hoặc nhấn nút "_" để thu nhỏ.
+1. Mở một video livestream YouTube bất kỳ có khung Live Chat (hoặc YouTube Live Studio).
+2. Extension tự động nhận diện khung chat (`yt-live-chat-item-list-renderer`) và kết nối trực tiếp ở chế độ chỉ đọc (Read-only).
+3. Khi khán giả bình luận:
+   - Extension tự động trích xuất người gửi, nội dung bình luận, loại tài khoản (`viewer`, `member`, `moderator`).
+   - In log chi tiết trong Console DevTools (`F12`).
+   - Gửi dữ liệu bình luận về AI Backend (`/api/plugin/comments`) để xử lý thống kê hoặc phân loại ý định.
+   - **Tuyệt đối không tự động gõ hay gửi bất kỳ tin nhắn nào vào khung chat**.
 
 ### 4. Cập nhật khi sửa code
 
@@ -166,4 +163,4 @@ Classifier và injection checks dựa trên keyword/pattern tiếng Anh, không 
 - [Contract tích hợp Member 2](docs/AI_INTEGRATION_CONTRACT.md)
 - [Báo cáo evaluation](docs/EVALUATION_REPORT.md)
 - [Báo cáo bàn giao chi tiết](AI_HANDOFF_REPORT.md)
-- [Kế hoạch Extension Overlay Shopee Live](docs/SHOPEE_LIVE_EXTENSION_PLAN.md)
+- [Kế hoạch Extension YouTube Live](docs/YOUTUBE_LIVE_EXTENSION_PLAN.md)
