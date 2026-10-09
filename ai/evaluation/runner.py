@@ -342,7 +342,11 @@ def run_evaluation(path: str | Path = SCENARIOS_PATH) -> dict[str, Any]:
         "evaluation_id": scenarios["metadata"]["dataset_id"],
         "data_origin": "synthetic",
         "catalog": "existing labeled synthetic demo catalog; evaluation scenarios remain separate",
-        "scope_note": "These are curated deterministic golden cases, not a representative sample of real customer traffic.",
+        "scope_note": (
+            "These are curated deterministic golden cases, not a representative "
+            "sample of real customer traffic. They do not evaluate the separate "
+            "backend local intent classifier, which is trained on synthetic examples."
+        ),
         "case_counts": {
             "customer_qa": len(qa_results),
             "comment_classification": len(comment_results),
@@ -362,6 +366,7 @@ def run_evaluation(path: str | Path = SCENARIOS_PATH) -> dict[str, Any]:
             "Scenario labels are hand-authored synthetic expected outcomes.",
             "The existing demonstration catalog is fictional; passing it does not validate real business facts.",
             "Intent accuracy measures only the included English keyword cases and is not general-world accuracy.",
+            "The backend local TF-IDF classifier is evaluated separately in docs/LOCAL_MODEL_EVALUATION.md; its synthetic holdout is not measured by this report.",
             "Unsupported-answer rate is conditional on the explicitly tagged unsupported-evidence cases only.",
             "Prompt-injection cases cover known patterns and do not establish complete injection resistance.",
             "No latency, production traffic, or human reviewer agreement was measured.",
@@ -395,7 +400,7 @@ def _render_markdown(report: Mapping[str, Any]) -> str:
         "",
         f"Evaluation set: `{report['evaluation_id']}`",
         "",
-        "This report measures deterministic behavior on curated synthetic golden cases. It is not a claim of real-world accuracy.",
+        report["scope_note"],
         "",
         "## Case Counts",
         "",

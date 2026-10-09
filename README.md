@@ -1,6 +1,6 @@
 # AI hỗ trợ phiên livestream bán hàng
 
-Mô-đun AI/Data cho đồ án tốt nghiệp “Xây dựng AI Agent hỗ trợ phiên livestream bán hàng”. Package cung cấp dữ liệu mô phỏng, tìm kiếm có cấu trúc, bản nháp trả lời khách hàng và hỗ trợ tổng hợp vận hành. Đây là thư viện Python độc lập để Member 2 tích hợp vào backend; repo này không chứa frontend hay API backend chính.
+Mô-đun AI/Data cho đồ án tốt nghiệp “Xây dựng AI Agent hỗ trợ phiên livestream bán hàng”. Repository gồm thư viện AI, FastAPI backend local và Chrome extension thu thập bình luận YouTube Live ở chế độ chỉ đọc. Backend phân loại bình luận, tạo draft có nguồn và cung cấp thống kê; không có dashboard, database hay xác thực.
 
 ## Mục tiêu và phạm vi
 
@@ -9,11 +9,11 @@ Mô-đun AI/Data cho đồ án tốt nghiệp “Xây dựng AI Agent hỗ trợ
 - Phân loại bình luận, tổng hợp câu hỏi lặp, issue và sự kiện phiên livestream được cung cấp.
 - Đánh giá hành vi bằng các golden case tổng hợp, tái lập được và chạy offline.
 
-Package không kết nối nền tảng livestream/e-commerce, không lưu đơn hàng, không xử lý thanh toán/hoàn tiền, không cung cấp màn hình phê duyệt và không tự thực hiện thao tác kinh doanh. Member 2 sở hữu backend, giao diện, simulator, xác thực và tích hợp luồng phê duyệt.
+Extension kết nối khung chat YouTube Live chỉ để thu thập bình luận. Backend không lưu đơn hàng, không xử lý thanh toán/hoàn tiền, không cung cấp màn hình phê duyệt và không tự gửi tin nhắn hay thực hiện thao tác kinh doanh.
 
 ## Khả năng theo phase
 
-- **Phase 0:** Python package metadata, cấu hình test và smoke test.
+- **Phase 0:** Python package metadata và cấu hình môi trường.
 - **Phase 1:** Dataclass có kiểu cho Product/FAQ/SalesPolicy; JSON mô phỏng; loader, validation, accessors và keyword search.
 - **Phase 2:** Intent classification theo rule, retrieval và bản nháp customer Q&A có source reference.
 - **Phase 3:** Review gate cho injection đã nhận diện, yêu cầu consequential, dữ liệu thiếu/mâu thuẫn và input quá dài. Giới hạn message là 4096 ký tự.
@@ -26,7 +26,9 @@ Package không kết nối nền tảng livestream/e-commerce, không lưu đơn
 - `ai.customer_qa`: `classify_intent`, `retrieve_evidence`, `draft_customer_answer`; trả `CustomerAnswerDraft` với status `answered` hoặc `needs_review`.
 - `ai.operations`: `SimulatedComment`, `SimulatedEvent`, classifier, aggregator và `summarize_session`; không gọi hệ thống ngoài.
 - `ai.evaluation`: scenarios tách khỏi demo catalog, runner và metric.
-- `tests`: kiểm thử `unittest` cho data, Q&A, operations và evaluation.
+- `backend.local_model`: TF-IDF character n-gram + Logistic Regression, train local từ corpus synthetic song ngữ; chỉ fallback khi rule classifier chưa nhận diện intent.
+- `backend.main`: API nhận bình luận, rate limit/moderation và answer draft dựa trên retrieval có nguồn. Không gọi dịch vụ LLM ngoài.
+- `extension`: collector YouTube Live read-only; không tự động trả lời chat.
 
 ## Cấu trúc thư mục
 
@@ -38,32 +40,30 @@ ai/
   operations/        # schemas, classification, aggregation, summary
   __init__.py
 docs/                # kiến trúc, contract tích hợp, evaluation report
-extension/           # Chrome Extension Headless tự động trả lời chat YouTube Live bằng AI
-reports/             # evaluation_report.json
-tests/
-    test_customer_qa.py
-    test_data.py
-    test_evaluation.py
-    test_operations.py
-    test_smoke.py
+extension/           # Chrome Extension thu thập bình luận YouTube Live (read-only)
+backend/             # FastAPI backend và local model
+    local_model.py     # Train/evaluate local intent classifier
+    intent_training_data.json # 260 mẫu synthetic để train classifier
+    intent_holdout_data.json # 65 mẫu synthetic holdout, tách khỏi train
+reports/             # JSON evaluation reports
 AI_HANDOFF_REPORT.md
 pyproject.toml
 ```
 
 ## Môi trường và chạy trên Windows
 
-Yêu cầu Python **3.11 trở lên**. Môi trường đã xác minh dùng Python 3.13.5 thông qua Windows launcher `py`. Package không có runtime dependency bên ngoài; không cần cài `pytest`. Build backend trong `pyproject.toml` khai báo `setuptools>=68`.
+Yêu cầu Python **3.11 trở lên**. Cài dependencies backend/local model bằng `py -m pip install -e ".[server]"`. Build backend trong `pyproject.toml` khai báo `setuptools>=68`. Không cần API key hoặc dịch vụ LLM.
 
 Mở PowerShell tại thư mục gốc repository (thư mục chứa `pyproject.toml`) và chạy:
 
 ```powershell
 py --version
-py -m unittest discover -s tests -v
-py -m compileall -q ai tests
+py -m compileall -q ai backend
 py -m ai.evaluation.runner
+py -m backend.local_model
 ```
 
-Lệnh evaluator tạo/cập nhật `reports/evaluation_report.json` và `docs/EVALUATION_REPORT.md`. Có thể chạy tests trực tiếp từ source checkout; nếu đóng gói thành wheel, cần xác nhận các file `ai/data/synthetic/*.json` được đưa vào package.
+Lệnh evaluator tạo/cập nhật `reports/evaluation_report.json` và `docs/EVALUATION_REPORT.md`. `py -m backend.local_model` train model local từ corpus synthetic. Nếu đóng gói thành wheel, các file JSON được cấu hình trong `pyproject.toml` để đi cùng package.
 
 ## Ví dụ sử dụng
 
@@ -124,18 +124,21 @@ Extension chạy ngầm (Headless - không giao diện, **không tự động tr
    ```
 2. Bật công tắc "Developer mode" (Chế độ cho nhà phát triển) ở góc trên bên phải.
 3. Nhấn nút "Load unpacked" (Tải tiện ích đã giải nén).
-4. Chọn thư mục `extension` trong thư mục dự án:
+4. Chọn thư mục `extension` trong thư mục dự án, ví dụ:
    ```text
-   /home/Dx/dev/ai-agent-for-livestream/extension
+    D:\project_2\extension
    ```
 
-### 2. Kết nối Backend AI (Tùy chọn)
+### 2. Khởi động Backend AI
 
-Khởi động backend FastAPI:
+Từ thư mục gốc repository, cài dependencies và chạy API. Không cần API key hoặc kết nối LLM; model intent local được train từ corpus synthetic khi khởi động:
 
-```bash
-uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload
+```powershell
+py -m pip install -e ".[server]"
+py -m uvicorn backend.main:app --host 127.0.0.1 --port 8000 --reload
 ```
+
+Kiểm tra backend tại `http://localhost:8000/health`. API nhận bình luận tại `POST /api/plugin/comments`; rule classifier chạy trước, model TF-IDF character n-gram + Logistic Regression chỉ làm fallback khi rules chưa nhận diện intent. Câu trả lời vẫn dựa trên retrieval/rules có source; thiếu evidence thì `needs_review`. Local model train trên 260 mẫu synthetic song ngữ và được đo trên holdout độc lập 65 mẫu trong `backend/intent_holdout_data.json`. Chạy `py -m backend.local_model` để train, evaluate và sinh `docs/LOCAL_MODEL_EVALUATION.md` cùng `reports/local_intent_model_report.json`. Lần chạy hiện tại: accuracy 75.4%, macro-F1 77.7%, answerable coverage 76.7%, selective accuracy 95.7%; đây không phải kết quả production. Model là classifier nhỏ, không phải model sinh ngôn ngữ. Ngưỡng local classifier cấu hình bằng `LOCAL_INTENT_CONFIDENCE_THRESHOLD` (mặc định `0.10`). Backend giới hạn mặc định 5 comment/10 giây cho mỗi viewer/member (`CHAT_RATE_LIMIT_MAX`, `CHAT_RATE_LIMIT_WINDOW_SECONDS`) và trả HTTP 429 khi vượt ngưỡng. Bộ lọc mặc định chặn một số từ tục tiếng Anh/Việt và comment có hơn 2 URL; có thể bổ sung cụm từ qua `CHAT_BLOCKED_TERMS` (cách nhau bằng dấu phẩy). Comment bị chặn có `moderation_status=blocked`; moderation chỉ đánh dấu trong API, không xóa comment khỏi YouTube. Draft được trả cùng bình luận và lưu trong danh sách qua `GET /api/plugin/comments`; thống kê có tại `GET /api/plugin/summary`. Dữ liệu catalog là synthetic/demo, tối đa 1000 bình luận gần nhất được giữ trong bộ nhớ và sẽ mất khi backend khởi động lại. Rate limit cũng chỉ nằm trong bộ nhớ và được áp dụng trong một tiến trình backend. Backend không có xác thực; chỉ bind vào loopback như lệnh trên, không expose trực tiếp ra mạng.
 
 ### 3. Vận hành trên YouTube Live
 
@@ -162,5 +165,6 @@ Classifier và injection checks dựa trên keyword/pattern tiếng Anh, không 
 - [Kiến trúc AI](docs/AI_ARCHITECTURE.md)
 - [Contract tích hợp Member 2](docs/AI_INTEGRATION_CONTRACT.md)
 - [Báo cáo evaluation](docs/EVALUATION_REPORT.md)
+- [Báo cáo train/evaluation local model](docs/LOCAL_MODEL_EVALUATION.md)
 - [Báo cáo bàn giao chi tiết](AI_HANDOFF_REPORT.md)
 - [Kế hoạch Extension YouTube Live](docs/YOUTUBE_LIVE_EXTENSION_PLAN.md)

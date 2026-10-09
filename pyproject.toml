@@ -9,9 +9,16 @@ description = "AI and data components for a simulated sales livestream"
 requires-python = ">=3.11"
 dependencies = []
 
+[project.optional-dependencies]
+server = [
+	"fastapi>=0.110",
+	"pydantic>=2.6",
+	"python-dotenv>=1.0",
+	"scikit-learn>=1.4",
+	"uvicorn>=0.27",
+]
 [tool.setuptools.packages.find]
-include = ["ai*"]
+include = ["ai*", "backend*"]
 
-[tool.pytest.ini_options]
-testpaths = ["tests"]
-pythonpath = ["."]
+[tool.setuptools.package-data]
+backend = ["*.json"]
