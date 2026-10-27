@@ -42,6 +42,9 @@
     .brand-name { font-size: 14px; font-weight: 720; }
     .brand-subtitle { margin-left: 9px; color: var(--muted); font-size: 11px; }
     .top-actions { display: flex; align-items: center; gap: 15px; }
+    .demo-button { min-height: 34px; display: inline-flex; align-items: center; gap: 7px; padding: 7px 11px; border: 1px solid #718449; border-radius: 5px; background: rgba(215, 237, 133, .08); color: var(--lime); cursor: pointer; font-size: 11px; font-weight: 650; }
+    .demo-button:hover:not(:disabled) { background: rgba(215, 237, 133, .15); }
+    .demo-button:disabled { opacity: .6; cursor: progress; }
     .connection { display: inline-flex; align-items: center; gap: 7px; color: var(--muted); font-size: 11px; }
     .connection-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--faint); }
     .connection.online { color: var(--mint); }
@@ -58,6 +61,16 @@
     .metric-value { display: block; margin-top: 6px; font-size: 23px; line-height: 1; font-weight: 720; font-variant-numeric: tabular-nums; }
     .metric.review .metric-value { color: var(--amber); }
     .metric.blocked .metric-value { color: var(--coral); }
+    .demo-result { max-width: 900px; margin-top: 12px; padding: 14px 16px; border: 1px solid #536449; border-radius: var(--radius); background: rgba(215, 237, 133, .035); }
+    .demo-result[hidden] { display: none; }
+    .demo-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+    .demo-title { color: var(--lime); font-size: 11px; font-weight: 750; text-transform: uppercase; letter-spacing: .06em; }
+    .demo-close { border: 0; background: transparent; color: var(--muted); cursor: pointer; font-size: 16px; }
+    .demo-question { margin-top: 10px; color: var(--text); font-weight: 600; }
+    .demo-intent { margin-top: 8px; color: var(--muted); font-size: 11px; }
+    .demo-answer { margin-top: 10px; line-height: 1.5; }
+    .demo-source { margin-top: 8px; color: var(--blue); font-size: 10px; }
+    .demo-error { margin-top: 9px; color: var(--coral); font-size: 11px; }
 
     .workspace { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; margin-top: 14px; align-items: start; }
     .panel { min-width: 0; overflow: hidden; border: 1px solid var(--line); border-radius: var(--radius); background: rgba(24, 35, 36, .92); }
@@ -112,6 +125,7 @@
         <div><span class="brand-name">Live Desk</span><span class="brand-subtitle">YouTube moderation</span></div>
       </div>
       <div class="top-actions">
+        <button class="demo-button" id="run-ai-demo" type="button"><span aria-hidden="true">▶</span> Chạy thử AI</button>
         <div class="connection" id="connection-status" aria-live="polite"><span class="connection-dot"></span><span id="connection-label">Đang kết nối</span></div>
       </div>
     </header>
@@ -124,6 +138,8 @@
       <div class="metric review"><div class="metric-label">Cần mod xem</div><strong class="metric-value" id="metric-review">—</strong></div>
       <div class="metric blocked"><div class="metric-label">Bị lọc</div><strong class="metric-value" id="metric-blocked">—</strong></div>
     </section>
+
+    <section class="demo-result" id="ai-demo-result" aria-live="polite" hidden></section>
 
     <main class="workspace">
       <section class="panel" aria-labelledby="queue-heading">
@@ -180,6 +196,58 @@
         $('#metric-review').textContent = state.summary?.needs_human_review_count ?? state.comments.filter((item) => item.needs_human_review).length;
         $('#metric-blocked').textContent = state.summary?.moderated_comment_count ?? state.comments.filter((item) => item.moderation_status === 'blocked').length;
         $('#last-updated').textContent = `Cập nhật ${formatTime(Date.now())}`;
+      }
+
+      function renderDemoResult(payload) {
+        const result = $('#ai-demo-result');
+        result.replaceChildren();
+        result.hidden = false;
+        const heading = make('div', 'demo-heading');
+        heading.append(make('div', 'demo-title', 'Kết quả chạy thử · dữ liệu synthetic'));
+        const close = make('button', 'demo-close', '×');
+        close.type = 'button';
+        close.setAttribute('aria-label', 'Đóng kết quả chạy thử');
+        close.addEventListener('click', () => { result.hidden = true; });
+        heading.append(close);
+        result.append(heading, make('div', 'demo-question', payload.text));
+
+        const intentLabel = INTENT_LABELS[payload.intent] || payload.intent;
+        const sourceName = payload.intent_source === 'local_model' ? 'Model local' : 'Rules';
+        const confidence = Number.isFinite(payload.intent_confidence)
+          ? ` · confidence ${(payload.intent_confidence * 100).toFixed(1)}%`
+          : '';
+        result.append(make('div', 'demo-intent', `${sourceName} → ${intentLabel}${confidence}`));
+
+        if (payload.answer_draft) {
+          result.append(make('div', 'demo-answer', payload.answer_draft.answer));
+          for (const source of payload.answer_draft.sources || []) {
+            result.append(make('div', 'demo-source', `Nguồn: ${source.title} · ${source.source_id}`));
+          }
+          if (payload.answer_draft.reason) {
+            result.append(make('div', 'demo-intent', payload.answer_draft.reason));
+          }
+        } else {
+          result.append(make('div', 'demo-error', 'Không tạo được answer draft cho mẫu thử này.'));
+        }
+      }
+
+      async function runAiDemo() {
+        const button = $('#run-ai-demo');
+        button.disabled = true;
+        button.lastChild.textContent = ' Đang chạy';
+        try {
+          const response = await fetch('/api/demo/ai', { method: 'POST' });
+          if (!response.ok) throw new Error('Demo request failed');
+          const payload = await response.json();
+          renderDemoResult(payload.result);
+        } catch (_error) {
+          const result = $('#ai-demo-result');
+          result.replaceChildren(make('div', 'demo-error', 'Không gọi được AI backend. Kiểm tra trạng thái kết nối.'));
+          result.hidden = false;
+        } finally {
+          button.disabled = false;
+          button.lastChild.textContent = ' Chạy thử AI';
+        }
       }
 
       function isVisible(comment) {
@@ -254,6 +322,7 @@
           renderComments();
         });
       });
+      $('#run-ai-demo').addEventListener('click', runAiDemo);
       refresh();
       window.setInterval(refresh, POLL_INTERVAL_MS);
     })();

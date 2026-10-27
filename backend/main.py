@@ -92,6 +92,102 @@ class AnswerDraftResponse(BaseModel):
     is_draft: Literal[True]
 
 
+def _process_comment(
+    payload: LiveCommentPayload,
+    *,
+    intent_model: LocalIntentModel,
+    moderator: ContentModerator,
+) -> ClassifiedLiveComment:
+    author_type = payload.author_type.casefold()
+    moderation = moderator.inspect(payload.text)
+    if not moderation.allowed:
+        return ClassifiedLiveComment(
+            comment_id=payload.comment_id,
+            sender=payload.sender,
+            text=payload.text,
+            author_type=payload.author_type,
+            timestamp=payload.timestamp,
+            intent="spam_or_irrelevant",
+            needs_human_review=True,
+            reason="Comment blocked by chat moderation.",
+            moderation_status="blocked",
+            moderation_reason=moderation.reason,
+        )
+
+    classification = classify_comment(
+        SimulatedComment(comment_id=payload.comment_id, text=payload.text)
+    )
+    intent_source: Literal["rules", "local_model"] = "rules"
+    intent_confidence = None
+    if (
+        classification.intent == "unknown"
+        and len(payload.text) <= MAX_CUSTOMER_MESSAGE_LENGTH
+    ):
+        prediction = intent_model.predict(payload.text)
+        intent_confidence = prediction.confidence
+        if prediction.intent != "unknown":
+            intent_source = "local_model"
+            review_reason = LOCAL_MODEL_REVIEW_REASONS.get(prediction.intent)
+            classification = CommentClassification(
+                comment_id=payload.comment_id,
+                intent=prediction.intent,
+                needs_human_review=review_reason is not None,
+                reason=review_reason,
+            )
+
+    answer_draft = None
+    if (
+        author_type in {"viewer", "member"}
+        and (
+            classification.intent in ANSWERABLE_INTENTS
+            or "?" in payload.text
+            or "？" in payload.text
+        )
+    ):
+        draft = draft_customer_answer(
+            CustomerQuestionRequest(
+                session_id="youtube-live",
+                comment_id=payload.comment_id,
+                text=payload.text,
+            ),
+            intent_override=(
+                classification.intent if intent_source == "local_model" else None
+            ),
+        )
+        answer_draft = AnswerDraftResponse(
+            answer=draft.answer,
+            intent=draft.intent,
+            sources=[
+                AnswerSourceResponse(
+                    source_type=source.source_type,
+                    source_id=source.source_id,
+                    title=source.title,
+                    excerpt=source.excerpt,
+                )
+                for source in draft.sources
+            ],
+            status=draft.status,
+            needs_human_review=draft.needs_human_review,
+            reason=draft.reason,
+            is_draft=draft.is_draft,
+        )
+
+    return ClassifiedLiveComment(
+        comment_id=payload.comment_id,
+        sender=payload.sender,
+        text=payload.text,
+        author_type=payload.author_type,
+        timestamp=payload.timestamp,
+        intent=classification.intent,
+        intent_source=intent_source,
+        intent_confidence=intent_confidence,
+        needs_human_review=classification.needs_human_review,
+        reason=classification.reason,
+        moderation_status="allowed",
+        answer_draft=answer_draft,
+    )
+
+
 def create_app(
     *,
     local_model: LocalIntentModel | None = None,
@@ -118,6 +214,22 @@ def create_app(
             "training_examples": intent_model.training_example_count,
         }
 
+    @app.post("/api/demo/ai", include_in_schema=False)
+    def run_ai_demo() -> dict[str, object]:
+        payload = LiveCommentPayload(
+            id="dashboard-ai-demo",
+            sender="Synthetic demo",
+            text="When can I expect my parcel?",
+            authorType="viewer",
+            timestamp=1,
+        )
+        result = _process_comment(
+            payload,
+            intent_model=intent_model,
+            moderator=moderator,
+        )
+        return {"demo": True, "result": result}
+
     @app.post("/api/plugin/comments", response_model=ClassifiedLiveComment)
     def receive_comment(payload: LiveCommentPayload) -> ClassifiedLiveComment:
         author_type = payload.author_type.casefold()
@@ -134,94 +246,7 @@ def create_app(
                 )
 
         moderation = moderator.inspect(payload.text)
-        if not moderation.allowed:
-            result = ClassifiedLiveComment(
-                comment_id=payload.comment_id,
-                sender=payload.sender,
-                text=payload.text,
-                author_type=payload.author_type,
-                timestamp=payload.timestamp,
-                intent="spam_or_irrelevant",
-                needs_human_review=True,
-                reason="Comment blocked by chat moderation.",
-                moderation_status="blocked",
-                moderation_reason=moderation.reason,
-            )
-            recent_comments.append(result)
-            return result
-
-        classification = classify_comment(
-            SimulatedComment(comment_id=payload.comment_id, text=payload.text)
-        )
-        intent_source: Literal["rules", "local_model"] = "rules"
-        intent_confidence = None
-        if (
-            classification.intent == "unknown"
-            and len(payload.text) <= MAX_CUSTOMER_MESSAGE_LENGTH
-        ):
-            prediction = intent_model.predict(payload.text)
-            intent_confidence = prediction.confidence
-            if prediction.intent != "unknown":
-                intent_source = "local_model"
-                review_reason = LOCAL_MODEL_REVIEW_REASONS.get(prediction.intent)
-                classification = CommentClassification(
-                    comment_id=payload.comment_id,
-                    intent=prediction.intent,
-                    needs_human_review=review_reason is not None,
-                    reason=review_reason,
-                )
-        answer_draft = None
-        if (
-            author_type in {"viewer", "member"}
-            and (
-                classification.intent in ANSWERABLE_INTENTS
-                or "?" in payload.text
-                or "？" in payload.text
-            )
-        ):
-            draft = draft_customer_answer(
-                CustomerQuestionRequest(
-                    session_id="youtube-live",
-                    comment_id=payload.comment_id,
-                    text=payload.text,
-                ),
-                intent_override=(
-                    classification.intent if intent_source == "local_model" else None
-                ),
-            )
-            answer = draft.answer
-            answer_draft = AnswerDraftResponse(
-                answer=answer,
-                intent=draft.intent,
-                sources=[
-                    AnswerSourceResponse(
-                        source_type=source.source_type,
-                        source_id=source.source_id,
-                        title=source.title,
-                        excerpt=source.excerpt,
-                    )
-                    for source in draft.sources
-                ],
-                status=draft.status,
-                needs_human_review=draft.needs_human_review,
-                reason=draft.reason,
-                is_draft=draft.is_draft,
-            )
-        result = ClassifiedLiveComment(
-            comment_id=payload.comment_id,
-            sender=payload.sender,
-            text=payload.text,
-            author_type=payload.author_type,
-            timestamp=payload.timestamp,
-            intent=classification.intent,
-            intent_source=intent_source,
-            intent_confidence=intent_confidence,
-            needs_human_review=classification.needs_human_review,
-            reason=classification.reason,
-            answer_draft=answer_draft,
-        )
-        recent_comments.append(result)
-        return result
+        result = _process_comment(payload, intent_model=intent_model, moderator=moderator)
 
     @app.get("/api/plugin/comments", response_model=list[ClassifiedLiveComment])
     def list_comments(
