@@ -21,4 +21,4 @@ server = [
 include = ["ai*", "backend*"]
 
 [tool.setuptools.package-data]
-backend = ["*.json"]
+backend = ["*.json", "*.html"]

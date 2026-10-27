@@ -7,6 +7,7 @@ from typing import Literal
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Query
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from ai.customer_qa import CustomerQuestionRequest, draft_customer_answer
@@ -103,6 +104,10 @@ def create_app(
     viewer_rate_limiter = rate_limiter or configured_rate_limiter()
     moderator = content_moderator or ContentModerator.from_environment()
     app = FastAPI(title="Livestream AI Backend", version="0.1.0")
+
+    @app.get("/dashboard", include_in_schema=False)
+    def dashboard() -> FileResponse:
+        return FileResponse(Path(__file__).with_name("dashboard.html"))
 
     @app.get("/health")
     def health() -> dict[str, str]:
