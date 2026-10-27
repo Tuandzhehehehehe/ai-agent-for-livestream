@@ -19,7 +19,7 @@ from backend.chat_safety import (
     ViewerRateLimiter,
     configured_rate_limiter,
 )
-from backend.local_model import LocalIntentModel, get_local_intent_model
+from backend.local_model import LocalIntentModel, MODEL_NAME, get_local_intent_model
 
 logger = logging.getLogger(__name__)
 load_dotenv(Path(__file__).resolve().parents[1] / ".env", override=False)
@@ -110,8 +110,13 @@ def create_app(
         return FileResponse(Path(__file__).with_name("dashboard.html"))
 
     @app.get("/health")
-    def health() -> dict[str, str]:
-        return {"status": "ok"}
+    def health() -> dict[str, str | int]:
+        return {
+            "status": "ok",
+            "ai_status": "ready",
+            "ai_model": MODEL_NAME,
+            "training_examples": intent_model.training_example_count,
+        }
 
     @app.post("/api/plugin/comments", response_model=ClassifiedLiveComment)
     def receive_comment(payload: LiveCommentPayload) -> ClassifiedLiveComment:

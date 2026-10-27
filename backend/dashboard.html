@@ -51,7 +51,6 @@
     .heading { display: flex; align-items: end; justify-content: space-between; gap: 16px; padding: 23px 0 18px; }
     .eyebrow { color: var(--lime); font-size: 10px; font-weight: 750; text-transform: uppercase; letter-spacing: .1em; }
     h1 { margin: 6px 0 0; font-size: 22px; line-height: 1.2; font-weight: 700; }
-    .readonly { color: var(--muted); font-size: 11px; }
 
     .metrics { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; max-width: 720px; }
     .metric { min-height: 77px; padding: 13px 15px; border: 1px solid var(--line); border-radius: var(--radius); background: rgba(24, 35, 36, .86); }
@@ -119,7 +118,6 @@
 
     <section class="heading">
       <div><div class="eyebrow">Live moderation</div><h1>Hàng đợi bình luận</h1></div>
-      <div class="readonly">Read-only · Không tự gửi chat</div>
     </section>
 
     <section class="metrics" aria-label="Tình hình cần xử lý">
@@ -169,11 +167,13 @@
         return Number.isNaN(date.getTime()) ? '—' : new Intl.DateTimeFormat('vi-VN', { hour: '2-digit', minute: '2-digit', second: '2-digit' }).format(date);
       }
 
-      function setConnection(online) {
+      function setConnection(health) {
+        const online = health.status === 'ok' && health.ai_status === 'ready';
         const status = $('#connection-status');
         status.classList.toggle('online', online);
         status.classList.toggle('offline', !online);
-        $('#connection-label').textContent = online ? 'Backend online' : 'Backend offline';
+        $('#connection-label').textContent = online ? 'AI backend đang chạy' : 'AI backend mất kết nối';
+        status.title = online ? `${health.ai_model} · ${health.training_examples} mẫu train` : 'Không kết nối được backend hoặc model chưa sẵn sàng';
       }
 
       function renderMetrics() {
@@ -234,7 +234,7 @@
           ]);
           if (!healthResponse.ok || !commentsResponse.ok || !summaryResponse.ok) throw new Error('Backend response error');
           const [health, comments, summary] = await Promise.all([healthResponse.json(), commentsResponse.json(), summaryResponse.json()]);
-          setConnection(health.status === 'ok');
+          setConnection(health);
           state.comments = Array.isArray(comments) ? comments : [];
           state.summary = summary;
           renderMetrics();
