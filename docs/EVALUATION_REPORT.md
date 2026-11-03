@@ -2,7 +2,7 @@
 
 Evaluation set: `SYN-EVAL-PHASE5-001`
 
-This report measures deterministic behavior on curated synthetic golden cases. It is not a claim of real-world accuracy.
+These are curated deterministic golden cases, not a representative sample of real customer traffic. They do not evaluate the separate backend local intent classifier, which is trained on synthetic examples.
 
 ## Case Counts
 
@@ -38,6 +38,7 @@ All included expected outcomes matched.
 - Scenario labels are hand-authored synthetic expected outcomes.
 - The existing demonstration catalog is fictional; passing it does not validate real business facts.
 - Intent accuracy measures only the included English keyword cases and is not general-world accuracy.
+- The backend local TF-IDF classifier is evaluated separately in docs/LOCAL_MODEL_EVALUATION.md; its synthetic holdout is not measured by this report.
 - Unsupported-answer rate is conditional on the explicitly tagged unsupported-evidence cases only.
 - Prompt-injection cases cover known patterns and do not establish complete injection resistance.
 - No latency, production traffic, or human reviewer agreement was measured.

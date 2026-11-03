@@ -51,6 +51,7 @@ def draft_customer_answer(
     request: CustomerQuestionRequest,
     *,
     dataset: SyntheticDataset | None = None,
+    intent_override: Intent | None = None,
 ) -> CustomerAnswerDraft:
     """Return an offline deterministic draft; never performs business actions."""
     if not isinstance(request.text, str) or not request.text.strip():
@@ -66,6 +67,8 @@ def draft_customer_answer(
 
     classification = classify_intent(request.text)
     intent = classification.intent
+    if intent == "unknown" and intent_override is not None:
+        intent = intent_override
     if intent == "prompt_injection":
         return _review(
             intent,

@@ -1,15 +1,12 @@
-# AI Integration Contract (Proposal)
+# AI Integration Contract
 
-This document proposes an in-process Python boundary for Member 2 to review.
-It is not an existing backend API and does not authorize changes to another
-member's implementation. Field names and status values require agreement
-before integration.
+This document describes the implemented in-process Python API and local HTTP
+backend. Answers are drafts grounded in synthetic catalog/FAQ/policy records;
+the backend does not call an external LLM or post replies to YouTube.
 
 ## Customer Q&A
 
-The following in-process Python interface is implemented by the AI package for
-Member 2 to review. It is not an HTTP contract. The main backend fields and
-transport remain owned by Member 2 and must not be changed without agreement.
+The in-process customer Q&A interface is implemented by the AI package:
 
 ```python
 from ai.customer_qa import CustomerQuestionRequest, draft_customer_answer
@@ -21,6 +18,10 @@ request = CustomerQuestionRequest(
 )
 draft = draft_customer_answer(request)
 ```
+
+`draft_customer_answer` also accepts an optional `intent_override`; only the
+backend's local classifier should supply it. Never accept an intent override
+directly from an untrusted HTTP request.
 
 The returned frozen `CustomerAnswerDraft` contains `answer`, `intent`,
 `sources`, `status`, `needs_human_review`, `reason`, and `is_draft`. `status`
@@ -53,9 +54,30 @@ else:
     verify_sources_and_present_draft(draft.answer, draft.sources)
 ```
 
-The functions in this example are Member 2 integration responsibilities, not
-functions supplied by this package. A review result may have no sources;
-preserve any returned references and its `reason`.
+A review result may have no sources; preserve any returned references and its
+`reason`.
+
+## Backend HTTP API
+
+The FastAPI app runs locally with `py -m uvicorn backend.main:app --host
+127.0.0.1 --port 8000`. The extension sends this payload to
+`POST /api/plugin/comments`:
+
+```json
+{
+    "id": "comment-42",
+    "sender": "@viewer",
+    "text": "What is the shipping policy?",
+    "authorType": "viewer",
+    "timestamp": 1791568800000
+}
+```
+
+The response includes rule/local-model intent source, moderation status, and an
+optional answer draft with evidence sources. `GET /api/plugin/comments` returns
+recent in-memory comments; `GET /api/plugin/summary` returns counts; `GET
+/health` is the health check. The backend has no authentication or persistence
+and should stay bound to loopback. Rate-limited requests receive HTTP 429.
 
 ## Operations assistance
 
@@ -112,9 +134,9 @@ readable summary is written to `docs/EVALUATION_REPORT.md`. Metrics include
 their actual denominators and have no target threshold unless the project team
 agrees one. Results are fixture checks only, not production accuracy claims.
 
-## Ownership and transport
+## Runtime boundaries
 
-The AI package exposes Python functions and typed values, not HTTP routes,
-database models, or frontend-specific structures. Member 2 owns transport,
-authentication, persistence, approval workflows, and the final integration
-contract. No raw API response format is fixed until both members agree.
+The `ai` package exposes Python functions and typed values; `backend.main`
+provides the HTTP routes. Storage is process-memory only. Authentication,
+durable persistence, reviewer UI, and any approved reply workflow are not
+implemented.

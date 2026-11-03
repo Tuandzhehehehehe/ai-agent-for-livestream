@@ -1,0 +1,334 @@
+{
+  "confidence_margin": 0.025,
+  "confidence_threshold": 0.1,
+  "confusion_matrix": [
+    [
+      1,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      1,
+      0,
+      0,
+      3
+    ],
+    [
+      0,
+      4,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      1
+    ],
+    [
+      0,
+      0,
+      5,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    [
+      0,
+      0,
+      0,
+      4,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      1
+    ],
+    [
+      0,
+      0,
+      0,
+      0,
+      3,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      2
+    ],
+    [
+      0,
+      0,
+      0,
+      0,
+      0,
+      4,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      1
+    ],
+    [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      5,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      5,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      3,
+      1,
+      0,
+      0,
+      1
+    ],
+    [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      4,
+      0,
+      0,
+      1
+    ],
+    [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      4,
+      0,
+      1
+    ],
+    [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      2,
+      3
+    ],
+    [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      5
+    ]
+  ],
+  "confusion_matrix_labels": [
+    "complaint",
+    "consequential_action",
+    "price_change_request",
+    "price_question",
+    "product_information",
+    "promotion_question",
+    "prompt_injection",
+    "refund_request",
+    "return_policy",
+    "shipping_policy",
+    "spam_or_irrelevant",
+    "stock_question",
+    "unknown"
+  ],
+  "examples_per_intent": {
+    "complaint": 5,
+    "consequential_action": 5,
+    "price_change_request": 5,
+    "price_question": 5,
+    "product_information": 5,
+    "promotion_question": 5,
+    "prompt_injection": 5,
+    "refund_request": 5,
+    "return_policy": 5,
+    "shipping_policy": 5,
+    "spam_or_irrelevant": 5,
+    "stock_question": 5,
+    "unknown": 5
+  },
+  "holdout_dataset_id": "SYN-LOCAL-INTENT-HOLDOUT-001",
+  "holdout_examples": 65,
+  "limitations": [
+    "Training and holdout examples are synthetic and hand-authored, not real livestream traffic.",
+    "The holdout is small (five examples per intent); scores are not production estimates.",
+    "No stream/channel grouping is available for this synthetic dataset.",
+    "Confidence scores are not calibrated probabilities."
+  ],
+  "metrics": {
+    "accuracy": 0.7538461538461538,
+    "answerable_coverage": 0.7666666666666667,
+    "decision_coverage": 0.7076923076923077,
+    "macro_f1": 0.7772505272505271,
+    "macro_precision": 0.9176788124156545,
+    "macro_recall": 0.7538461538461537,
+    "selective_accuracy": 0.9565217391304348,
+    "unknown_false_accept_rate": 0.0,
+    "weighted_f1": 0.7772505272505272
+  },
+  "model": "tfidf-char-logreg-v1",
+  "per_intent": {
+    "complaint": {
+      "f1": 0.3333333333333333,
+      "precision": 1.0,
+      "recall": 0.2,
+      "support": 5
+    },
+    "consequential_action": {
+      "f1": 0.8888888888888888,
+      "precision": 1.0,
+      "recall": 0.8,
+      "support": 5
+    },
+    "price_change_request": {
+      "f1": 1.0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "support": 5
+    },
+    "price_question": {
+      "f1": 0.8888888888888888,
+      "precision": 1.0,
+      "recall": 0.8,
+      "support": 5
+    },
+    "product_information": {
+      "f1": 0.75,
+      "precision": 1.0,
+      "recall": 0.6,
+      "support": 5
+    },
+    "promotion_question": {
+      "f1": 0.8888888888888888,
+      "precision": 1.0,
+      "recall": 0.8,
+      "support": 5
+    },
+    "prompt_injection": {
+      "f1": 1.0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "support": 5
+    },
+    "refund_request": {
+      "f1": 1.0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "support": 5
+    },
+    "return_policy": {
+      "f1": 0.75,
+      "precision": 1.0,
+      "recall": 0.6,
+      "support": 5
+    },
+    "shipping_policy": {
+      "f1": 0.7272727272727273,
+      "precision": 0.6666666666666666,
+      "recall": 0.8,
+      "support": 5
+    },
+    "spam_or_irrelevant": {
+      "f1": 0.8888888888888888,
+      "precision": 1.0,
+      "recall": 0.8,
+      "support": 5
+    },
+    "stock_question": {
+      "f1": 0.5714285714285714,
+      "precision": 1.0,
+      "recall": 0.4,
+      "support": 5
+    },
+    "unknown": {
+      "f1": 0.4166666666666667,
+      "precision": 0.2631578947368421,
+      "recall": 1.0,
+      "support": 5
+    }
+  },
+  "report_version": 1,
+  "training_dataset_id": "SYN-LOCAL-INTENT-TRAIN-002",
+  "training_examples": 260
+}
