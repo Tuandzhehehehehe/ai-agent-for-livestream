@@ -7,7 +7,7 @@ from typing import Literal
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import FileResponse
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ConfigDict, Field
 
 from ai.customer_qa import CustomerQuestionRequest, draft_customer_answer
@@ -201,10 +201,6 @@ def create_app(
     moderator = content_moderator or ContentModerator.from_environment()
     app = FastAPI(title="Livestream AI Backend", version="0.1.0")
 
-    @app.get("/dashboard", include_in_schema=False)
-    def dashboard() -> FileResponse:
-        return FileResponse(Path(__file__).with_name("dashboard.html"))
-
     @app.get("/health")
     def health() -> dict[str, str | int]:
         return {
@@ -213,22 +209,6 @@ def create_app(
             "ai_model": MODEL_NAME,
             "training_examples": intent_model.training_example_count,
         }
-
-    @app.post("/api/demo/ai", include_in_schema=False)
-    def run_ai_demo() -> dict[str, object]:
-        payload = LiveCommentPayload(
-            id="dashboard-ai-demo",
-            sender="Synthetic demo",
-            text="When can I expect my parcel?",
-            authorType="viewer",
-            timestamp=1,
-        )
-        result = _process_comment(
-            payload,
-            intent_model=intent_model,
-            moderator=moderator,
-        )
-        return {"demo": True, "result": result}
 
     @app.post("/api/plugin/comments", response_model=ClassifiedLiveComment)
     def receive_comment(payload: LiveCommentPayload) -> ClassifiedLiveComment:
@@ -245,8 +225,9 @@ def create_app(
                     headers={"Retry-After": str(retry_after)},
                 )
 
-        moderation = moderator.inspect(payload.text)
         result = _process_comment(payload, intent_model=intent_model, moderator=moderator)
+        recent_comments.append(result)
+        return result
 
     @app.get("/api/plugin/comments", response_model=list[ClassifiedLiveComment])
     def list_comments(
