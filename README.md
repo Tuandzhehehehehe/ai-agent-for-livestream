@@ -41,11 +41,16 @@ ai/
   __init__.py
 docs/                # kiến trúc, contract tích hợp, evaluation report
 extension/           # Chrome Extension thu thập bình luận YouTube Live (read-only)
-backend/             # FastAPI backend và local model
+backend/             # FastAPI backend, local model và multi-tenant database layer
+    database/          # MongoDB/Redis managers, Pydantic models, validators, indexes, facade
+    repositories/      # Multi-tenant repositories (tenant, catalog, livestream)
+    infrastructure/    # Redis operational cache, key conventions, Redis Streams
     local_model.py     # Train/evaluate local intent classifier
     intent_training_data.json # 260 mẫu synthetic để train classifier
     intent_holdout_data.json # 65 mẫu synthetic holdout, tách khỏi train
 reports/             # JSON evaluation reports
+docker-compose.yml   # MongoDB & Redis local infrastructure
+.env.example         # Database & Redis environment configuration template
 AI_HANDOFF_REPORT.md
 pyproject.toml
 ```
@@ -168,3 +173,4 @@ Classifier và injection checks dựa trên keyword/pattern tiếng Anh, không 
 - [Báo cáo train/evaluation local model](docs/LOCAL_MODEL_EVALUATION.md)
 - [Báo cáo bàn giao chi tiết](AI_HANDOFF_REPORT.md)
 - [Kế hoạch Extension YouTube Live](docs/YOUTUBE_LIVE_EXTENSION_PLAN.md)
+- [Hướng dẫn tích hợp Database & Redis Multi-Tenant](docs/DATABASE_INTEGRATION_GUIDE.md)

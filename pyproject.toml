@@ -13,9 +13,17 @@ dependencies = []
 server = [
 	"fastapi>=0.110",
 	"pydantic>=2.6",
+	"pymongo>=4.9",
 	"python-dotenv>=1.0",
+	"redis>=5.0",
 	"scikit-learn>=1.4",
 	"uvicorn>=0.27",
+]
+database = [
+	"pydantic>=2.6",
+	"pymongo>=4.9",
+	"python-dotenv>=1.0",
+	"redis>=5.0",
 ]
 [tool.setuptools.packages.find]
 include = ["ai*", "backend*"]
