@@ -13,6 +13,7 @@ from ai.customer_qa.schemas import (
 from ai.customer_qa.safety import MAX_CUSTOMER_MESSAGE_LENGTH
 from ai.data import load_synthetic_data
 from ai.data.models import FAQ, Product, SyntheticDataset
+from backend.ollama_provider import generate_answer_with_ollama
 
 _ACTION_INTENTS: dict[Intent, str] = {
     "refund_request": "Refunds are consequential actions and cannot be processed here.",
@@ -87,6 +88,40 @@ def draft_customer_answer(
         if intent == "unknown":
             return _review(intent, _ACTION_INTENTS[intent])
     references = retrieve_evidence(request.text, intent=intent, dataset=records)
+    if references:
+        evidence_text = tuple(
+            f"[{reference.source_type}:{reference.source_id}] {reference.title}: {reference.excerpt}"
+            for reference in references
+        )
+        llm_answer = generate_answer_with_ollama(request.text, evidence=evidence_text)
+        if llm_answer is not None:
+            uncertain = any(
+                keyword in llm_answer.casefold()
+                for keyword in (
+                    "not certain",
+                    "uncertain",
+                    "insufficient evidence",
+                    "not enough information",
+                    "needs review",
+                    "ask an operator",
+                    "requires operator",
+                )
+            )
+            if uncertain:
+                return _review(
+                    intent,
+                    "The local LLM could not answer confidently from the supplied evidence; operator review is required.",
+                    references=references,
+                )
+            return CustomerAnswerDraft(
+                answer=llm_answer,
+                intent=intent,
+                sources=references,
+                status="answered",
+                needs_human_review=False,
+                reason="Draft generated from local Ollama using retrieved evidence.",
+                is_draft=True,
+            )
     if intent in {"shipping_policy", "return_policy", "promotion_question"}:
         return _answer_policy_question(request.text, intent, references)
     if intent in {"price_question", "stock_question", "product_information"}:

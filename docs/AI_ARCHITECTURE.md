@@ -4,9 +4,10 @@
 
 The `ai` Python package contains data processing, retrieval, customer Q&A,
 operations assistance, and deterministic evaluation. The repository also
-contains a local FastAPI backend and a read-only YouTube Live comment
-collector. There is no dashboard, database, authentication, approval workflow,
-or transaction execution.
+contains a local FastAPI backend, a moderation dashboard, a read-only YouTube
+Live collector, and MongoDB/Redis infrastructure modules. The database modules
+are not yet wired into the live API routes, which still use in-memory storage.
+Authentication, approval UI, and transaction execution are not implemented.
 
 ## Module boundaries
 
@@ -24,6 +25,10 @@ or transaction execution.
   intent classifier, trained from `backend/intent_training_data.json`.
 - `backend.main`: HTTP ingestion, rate limiting, moderation, retrieval-backed
   answer drafts, and in-memory summaries.
+- `backend.database`, `backend.repositories`, `backend.infrastructure`:
+  multi-tenant MongoDB/Redis managers, models, repositories, cache, and stream
+  primitives. These are currently a separate integration layer, not the live
+  route persistence implementation.
 - `extension`: YouTube Live comment collector; it does not post chat messages.
 
 The `ai.data` package provides typed product, FAQ, and policy records, validates
@@ -52,7 +57,27 @@ are bounded.
 The local classifier runs only when deterministic rules return `unknown`.
 It does not generate answer text. Customer answers still come from retrieval
 over approved synthetic data; missing evidence produces `needs_review`. No
-external LLM provider is called by the backend.
+cloud LLM provider is called by the backend. A local Ollama model is optional;
+when enabled, it receives only the question and retrieved evidence and produces
+a draft. If Ollama is disabled, unavailable, or returns an unusable response,
+the deterministic answer service remains the fallback.
+
+## Retrieval choice
+
+The bundled corpus currently has 18 records: 6 products, 8 FAQs, and 4 sales
+policies. `ai.customer_qa.retrieval.retrieve_evidence` uses deterministic
+keyword candidates, intent/category filtering, product-name matching, and
+effective-policy filtering, then returns typed source references. A small
+local probe confirmed a shipping paraphrase resolves to
+`SYN-POLICY-SHIPPING-001`, a product-color question resolves to its product
+and FAQ records, and an unrelated sports question returns no evidence.
+
+A vector database is not justified for this corpus yet. FAISS/Chroma would add
+an embedding model, index lifecycle, and dependency surface without a labeled
+retrieval benchmark showing better recall on this small synthetic dataset.
+Keep the current deterministic retriever as the baseline; reconsider a single
+local vector index when the catalog/FAQ corpus grows materially and a held-out
+retrieval evaluation demonstrates a measurable benefit.
 
 `ai.evaluation` runs deterministic golden cases from a separate synthetic
 fixture and reports intent/outcome accuracy, escalation recall, unsupported
@@ -65,7 +90,10 @@ their denominators and do not estimate real-world accuracy.
 Data and schemas are independent of the HTTP backend. Retrieval uses the data
 layer; Q&A and operations use schemas and retrieval. The backend imports these
 Python APIs and exposes the comment/summary routes. The local model depends on
-scikit-learn and the synthetic training corpus; no API credentials are needed.
+scikit-learn and the synthetic training corpus. Optional local Ollama uses its
+loopback HTTP API and needs no cloud credentials or automatic model download.
+The MongoDB/Redis packages are not wired into `backend.main` yet; current live
+comments and rate limits remain in process memory.
 
 ## Phase boundaries
 

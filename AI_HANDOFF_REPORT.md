@@ -2,7 +2,7 @@
 
 ## Trạng thái bàn giao
 
-Workspace hiện gồm package AI/Data, FastAPI backend local, Chrome extension YouTube Live read-only và local intent classifier. Backend không có database, xác thực hay giao diện, không gọi API LLM bên ngoài và không tự trả lời chat. Tài liệu liên quan gồm `docs/AI_ARCHITECTURE.md`, `docs/AI_INTEGRATION_CONTRACT.md`, `docs/EVALUATION_REPORT.md`, `docs/LOCAL_MODEL_EVALUATION.md`; báo cáo máy đọc được tại `reports/evaluation_report.json` và `reports/local_intent_model_report.json`.
+Workspace hiện gồm package AI/Data, FastAPI backend local, moderation dashboard, Chrome extension YouTube Live read-only, local intent classifier và MongoDB/Redis database layer. Database repositories hiện chưa được wired vào live API; comments/rate limits vẫn dùng in-memory buffer. Backend không có authentication, không gọi cloud LLM và không tự trả lời chat. Tài liệu gồm `docs/AI_ARCHITECTURE.md`, `docs/AI_INTEGRATION_CONTRACT.md`, `docs/DATABASE_INTEGRATION_GUIDE.md` và các evaluation reports.
 
 Q&A schema, rule classifier, retrieval và evidence-grounded draft nằm trong `ai.customer_qa`. `backend.local_model` là classifier TF-IDF character n-gram + Logistic Regression, được train local từ 260 ví dụ synthetic song ngữ và đo trên holdout tách biệt 65 mẫu. Model chỉ làm fallback khi rule classifier trả `unknown`; câu trả lời vẫn cần evidence từ retrieval. Đây là classifier, không phải model sinh văn bản; cả train và holdout đều synthetic, không đại diện production.
 

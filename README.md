@@ -1,6 +1,6 @@
 # AI hỗ trợ phiên livestream bán hàng
 
-Mô-đun AI/Data cho đồ án tốt nghiệp “Xây dựng AI Agent hỗ trợ phiên livestream bán hàng”. Repository gồm thư viện AI, FastAPI backend local và Chrome extension thu thập bình luận YouTube Live ở chế độ chỉ đọc. Backend phân loại bình luận, tạo draft có nguồn và cung cấp thống kê; không có dashboard, database hay xác thực.
+Mô-đun AI/Data cho đồ án tốt nghiệp “Xây dựng AI Agent hỗ trợ phiên livestream bán hàng”. Repository gồm thư viện AI, FastAPI backend local, dashboard moderation, Chrome extension YouTube Live read-only, cùng database layer MongoDB/Redis. Database layer hiện là module tích hợp riêng; API live vẫn dùng in-memory buffer và chưa có xác thực.
 
 ## Mục tiêu và phạm vi
 
@@ -27,7 +27,8 @@ Extension kết nối khung chat YouTube Live chỉ để thu thập bình luậ
 - `ai.operations`: `SimulatedComment`, `SimulatedEvent`, classifier, aggregator và `summarize_session`; không gọi hệ thống ngoài.
 - `ai.evaluation`: scenarios tách khỏi demo catalog, runner và metric.
 - `backend.local_model`: TF-IDF character n-gram + Logistic Regression, train local từ corpus synthetic song ngữ; chỉ fallback khi rule classifier chưa nhận diện intent.
-- `backend.main`: API nhận bình luận, rate limit/moderation và answer draft dựa trên retrieval có nguồn. Không gọi dịch vụ LLM ngoài.
+- `backend.main`: API nhận bình luận, rate limit/moderation và answer draft dựa trên retrieval có nguồn. Ollama local là tùy chọn; không dùng cloud LLM.
+- `backend.database`, `backend.repositories`, `backend.infrastructure`: lớp MongoDB/Redis multi-tenant và repository. Hiện chưa được nối vào routes live của `backend.main`, nên API vẫn dùng in-memory buffer.
 - `extension`: collector YouTube Live read-only; không tự động trả lời chat.
 
 ## Cấu trúc thư mục
@@ -57,7 +58,7 @@ pyproject.toml
 
 ## Môi trường và chạy trên Windows
 
-Yêu cầu Python **3.11 trở lên**. Cài dependencies backend/local model bằng `py -m pip install -e ".[server]"`. Build backend trong `pyproject.toml` khai báo `setuptools>=68`. Không cần API key hoặc dịch vụ LLM.
+Yêu cầu Python **3.11 trở lên**. Cài dependencies backend/local model bằng `py -m pip install -e ".[server]"`. Build backend trong `pyproject.toml` khai báo `setuptools>=68`. Backend hoạt động mặc định không cần API key hay model LLM; Ollama là tuỳ chọn chạy local.
 
 Mở PowerShell tại thư mục gốc repository (thư mục chứa `pyproject.toml`) và chạy:
 
@@ -68,7 +69,7 @@ py -m ai.evaluation.runner
 py -m backend.local_model
 ```
 
-Lệnh evaluator tạo/cập nhật `reports/evaluation_report.json` và `docs/EVALUATION_REPORT.md`. `py -m backend.local_model` train model local từ corpus synthetic. Nếu đóng gói thành wheel, các file JSON được cấu hình trong `pyproject.toml` để đi cùng package.
+Lệnh evaluator tạo/cập nhật `reports/evaluation_report.json` và `docs/EVALUATION_REPORT.md`. `py -m backend.local_model` train model local từ corpus synthetic. Các file JSON/HTML backend được cấu hình trong `pyproject.toml` để đi cùng package.
 
 ## Ví dụ sử dụng
 
@@ -143,7 +144,16 @@ py -m pip install -e ".[server]"
 py -m uvicorn backend.main:app --host 127.0.0.1 --port 8000 --reload
 ```
 
-API nhận bình luận tại `POST /api/plugin/comments`; rule classifier chạy trước, model TF-IDF character n-gram + Logistic Regression chỉ làm fallback khi rules chưa nhận diện intent. Câu trả lời vẫn dựa trên retrieval/rules có source; thiếu evidence thì `needs_review`. Local model train trên 260 mẫu synthetic song ngữ và được đo trên holdout độc lập 65 mẫu trong `backend/intent_holdout_data.json`. Chạy `py -m backend.local_model` để train, evaluate và sinh `docs/LOCAL_MODEL_EVALUATION.md` cùng `reports/local_intent_model_report.json`. Lần chạy hiện tại: accuracy 75.4%, macro-F1 77.7%, answerable coverage 76.7%, selective accuracy 95.7%; đây không phải kết quả production. Model là classifier nhỏ, không phải model sinh ngôn ngữ. Ngưỡng local classifier cấu hình bằng `LOCAL_INTENT_CONFIDENCE_THRESHOLD` (mặc định `0.10`). Backend giới hạn mặc định 5 comment/10 giây cho mỗi viewer/member (`CHAT_RATE_LIMIT_MAX`, `CHAT_RATE_LIMIT_WINDOW_SECONDS`) và trả HTTP 429 khi vượt ngưỡng. Bộ lọc mặc định chặn một số từ tục tiếng Anh/Việt và comment có hơn 2 URL; có thể bổ sung cụm từ qua `CHAT_BLOCKED_TERMS` (cách nhau bằng dấu phẩy). Comment bị chặn có `moderation_status=blocked`; moderation chỉ đánh dấu trong API, không xóa comment khỏi YouTube. Draft được trả cùng bình luận và lưu trong danh sách qua `GET /api/plugin/comments`; thống kê có tại `GET /api/plugin/summary`. Dữ liệu catalog là synthetic/demo, tối đa 1000 bình luận gần nhất được giữ trong bộ nhớ và sẽ mất khi backend khởi động lại. Rate limit cũng chỉ nằm trong bộ nhớ và được áp dụng trong một tiến trình backend. Backend không có xác thực; chỉ bind vào loopback như lệnh trên, không expose trực tiếp ra mạng.
+Mở dashboard tại `http://127.0.0.1:8000/dashboard` để theo dõi comment, intent, moderation, draft và source theo thời gian thực. API nhận bình luận tại `POST /api/plugin/comments`; rule classifier chạy trước, model TF-IDF character n-gram + Logistic Regression chỉ làm fallback khi rules chưa nhận diện intent. RAG hiện dùng keyword/entity/intent-filtered retrieval trên corpus nhỏ (6 products, 8 FAQs, 4 policies); chưa thêm FAISS/Chroma vì chưa có benchmark chứng minh vector retrieval có lợi cho 18 records. Draft cần source; thiếu evidence thì `needs_review`. Ollama chạy local mặc định tắt và có thể bật trong `.env`:
+
+```env
+OLLAMA_ENABLED=false
+OLLAMA_BASE_URL=http://127.0.0.1:11434
+OLLAMA_MODEL=qwen2.5:3b-instruct
+OLLAMA_TIMEOUT_SECONDS=30
+```
+
+Muốn bật Ollama: cài Ollama theo hướng dẫn chính thức, chạy `ollama pull qwen2.5:3b-instruct` (không tự tải model), đặt `OLLAMA_ENABLED=true` trong `.env`, rồi restart backend. Có thể thay `OLLAMA_MODEL` bằng model Llama/Qwen đã pull. Nếu Ollama tắt, không kết nối được, hoặc trả lỗi, câu trả lời deterministic hiện có vẫn được dùng. Local intent model train trên 260 mẫu synthetic song ngữ và được đo trên holdout độc lập 65 mẫu trong `backend/intent_holdout_data.json`. Chạy `py -m backend.local_model` để train, evaluate và sinh `docs/LOCAL_MODEL_EVALUATION.md` cùng `reports/local_intent_model_report.json`. Lần chạy hiện tại: accuracy 75.4%, macro-F1 77.7%, answerable coverage 76.7%, selective accuracy 95.7%; đây không phải kết quả production. Ngưỡng local classifier cấu hình bằng `LOCAL_INTENT_CONFIDENCE_THRESHOLD` (mặc định `0.10`). Backend giới hạn mặc định 5 comment/10 giây cho mỗi viewer/member (`CHAT_RATE_LIMIT_MAX`, `CHAT_RATE_LIMIT_WINDOW_SECONDS`) và trả HTTP 429 khi vượt ngưỡng. Bộ lọc mặc định chặn một số từ tục tiếng Anh/Việt và comment có hơn 2 URL; có thể bổ sung cụm từ qua `CHAT_BLOCKED_TERMS` (cách nhau bằng dấu phẩy). Comment bị chặn có `moderation_status=blocked`; moderation chỉ đánh dấu trong API, không xóa comment khỏi YouTube. Draft được trả cùng bình luận và lưu trong danh sách qua `GET /api/plugin/comments`; thống kê có tại `GET /api/plugin/summary`. Dữ liệu catalog là synthetic/demo, tối đa 1000 bình luận gần nhất được giữ trong bộ nhớ và sẽ mất khi backend khởi động lại. Rate limit cũng chỉ nằm trong bộ nhớ và được áp dụng trong một tiến trình backend. Backend không có xác thực; chỉ bind vào loopback như lệnh trên, không expose trực tiếp ra mạng.
 
 ### 3. Vận hành trên YouTube Live
 
