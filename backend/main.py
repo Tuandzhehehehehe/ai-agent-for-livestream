@@ -3,11 +3,10 @@
 from collections import Counter, deque
 import logging
 from pathlib import Path
-from typing import Any, Literal
+from typing import Literal
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import FileResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from ai.customer_qa import CustomerQuestionRequest, draft_customer_answer
@@ -98,22 +97,9 @@ def _process_comment(
     *,
     intent_model: LocalIntentModel,
     moderator: ContentModerator,
-    flow: list[dict[str, Any]] | None = None,
 ) -> ClassifiedLiveComment:
     author_type = payload.author_type.casefold()
     moderation = moderator.inspect(payload.text)
-    if flow is not None:
-        flow.append(
-            {
-                "stage": "Moderation",
-                "status": "passed" if moderation.allowed else "blocked",
-                "detail": (
-                    "Comment vượt qua blocklist và giới hạn liên kết."
-                    if moderation.allowed
-                    else "Comment bị chặn: " + str(moderation.reason)
-                ),
-            }
-        )
     if not moderation.allowed:
         return ClassifiedLiveComment(
             comment_id=payload.comment_id,
@@ -131,16 +117,6 @@ def _process_comment(
     classification = classify_comment(
         SimulatedComment(comment_id=payload.comment_id, text=payload.text)
     )
-    rules_intent = classification.intent
-    if flow is not None:
-        flow.append(
-            {
-                "stage": "Rule classifier",
-                "status": "matched" if rules_intent != "unknown" else "unknown",
-                "detail": f"Rules trả intent `{rules_intent}`.",
-            }
-        )
-
     intent_source: Literal["rules", "local_model"] = "rules"
     intent_confidence = None
     if (
@@ -149,17 +125,6 @@ def _process_comment(
     ):
         prediction = intent_model.predict(payload.text)
         intent_confidence = prediction.confidence
-        if flow is not None:
-            flow.append(
-                {
-                    "stage": "Local intent model",
-                    "status": "classified" if prediction.intent != "unknown" else "abstained",
-                    "detail": (
-                        f"Prediction: `{prediction.intent}` · "
-                        f"confidence {prediction.confidence:.1%} · margin {prediction.margin:.1%}."
-                    ),
-                }
-            )
         if prediction.intent != "unknown":
             intent_source = "local_model"
             review_reason = LOCAL_MODEL_REVIEW_REASONS.get(prediction.intent)
@@ -169,18 +134,6 @@ def _process_comment(
                 needs_human_review=review_reason is not None,
                 reason=review_reason,
             )
-    elif flow is not None:
-        flow.append(
-            {
-                "stage": "Local intent model",
-                "status": "skipped",
-                "detail": (
-                    "Rules đã xác định intent."
-                    if rules_intent != "unknown"
-                    else "Comment quá dài, model không phân loại."
-                ),
-            }
-        )
 
     answer_draft = None
     if (
@@ -217,34 +170,6 @@ def _process_comment(
             needs_human_review=draft.needs_human_review,
             reason=draft.reason,
             is_draft=draft.is_draft,
-        )
-        if flow is not None:
-            source_ids = [source.source_id for source in answer_draft.sources]
-            flow.append(
-                {
-                    "stage": "Evidence retrieval",
-                    "status": "found" if source_ids else "missing",
-                    "detail": (
-                        f"Tìm thấy {len(source_ids)} nguồn: {', '.join(source_ids)}."
-                        if source_ids
-                        else "Không tìm thấy nguồn phù hợp."
-                    ),
-                }
-            )
-            flow.append(
-                {
-                    "stage": "Answer draft",
-                    "status": draft.status,
-                    "detail": draft.reason or "Draft được tạo từ dữ liệu có nguồn.",
-                }
-            )
-    elif flow is not None:
-        flow.append(
-            {
-                "stage": "Answer draft",
-                "status": "skipped",
-                "detail": "Comment không đủ điều kiện tạo draft.",
-            }
         )
 
     return ClassifiedLiveComment(
@@ -288,28 +213,6 @@ def create_app(
             "ollama_configured": ollama.is_configured,
             "ollama_model": ollama.model or None,
         }
-
-    @app.get("/dashboard", include_in_schema=False)
-    def dashboard() -> FileResponse:
-        return FileResponse(Path(__file__).with_name("dashboard.html"))
-
-    @app.post("/api/demo/ai", include_in_schema=False)
-    def run_ai_demo() -> dict[str, object]:
-        payload = LiveCommentPayload(
-            id="dashboard-ai-demo",
-            sender="Synthetic demo",
-            text="When can I expect my parcel?",
-            authorType="viewer",
-            timestamp=1,
-        )
-        flow: list[dict[str, Any]] = []
-        result = _process_comment(
-            payload,
-            intent_model=intent_model,
-            moderator=moderator,
-            flow=flow,
-        )
-        return {"demo": True, "flow": flow, "result": result}
 
     @app.post("/api/plugin/comments", response_model=ClassifiedLiveComment)
     def receive_comment(payload: LiveCommentPayload) -> ClassifiedLiveComment:

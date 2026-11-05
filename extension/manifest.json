@@ -17,6 +17,9 @@
         "https://*.youtube.com/*"
       ],
       "all_frames": true,
+      "css": [
+        "src/content/content.css"
+      ],
       "js": [
         "src/content/content.js"
       ],

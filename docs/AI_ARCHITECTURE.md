@@ -4,7 +4,7 @@
 
 The `ai` Python package contains data processing, retrieval, customer Q&A,
 operations assistance, and deterministic evaluation. The repository also
-contains a local FastAPI backend, a moderation dashboard, a read-only YouTube
+contains a local FastAPI backend, a read-only YouTube
 Live collector, and MongoDB/Redis infrastructure modules. The database modules
 are not yet wired into the live API routes, which still use in-memory storage.
 Authentication, approval UI, and transaction execution are not implemented.

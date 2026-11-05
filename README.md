@@ -1,6 +1,6 @@
 # AI hỗ trợ phiên livestream bán hàng
 
-Mô-đun AI/Data cho đồ án tốt nghiệp “Xây dựng AI Agent hỗ trợ phiên livestream bán hàng”. Repository gồm thư viện AI, FastAPI backend local, dashboard moderation, Chrome extension YouTube Live read-only, cùng database layer MongoDB/Redis. Database layer hiện là module tích hợp riêng; API live vẫn dùng in-memory buffer và chưa có xác thực.
+Mô-đun AI/Data cho đồ án tốt nghiệp “Xây dựng AI Agent hỗ trợ phiên livestream bán hàng”. Repository gồm thư viện AI, FastAPI backend local, Chrome extension YouTube Live read-only, cùng database layer MongoDB/Redis. Database layer hiện là module tích hợp riêng; API live vẫn dùng in-memory buffer và chưa có xác thực.
 
 ## Mục tiêu và phạm vi
 
@@ -144,7 +144,7 @@ py -m pip install -e ".[server]"
 py -m uvicorn backend.main:app --host 127.0.0.1 --port 8000 --reload
 ```
 
-Mở dashboard tại `http://127.0.0.1:8000/dashboard` để theo dõi comment, intent, moderation, draft và source theo thời gian thực. API nhận bình luận tại `POST /api/plugin/comments`; rule classifier chạy trước, model TF-IDF character n-gram + Logistic Regression chỉ làm fallback khi rules chưa nhận diện intent. RAG hiện dùng keyword/entity/intent-filtered retrieval trên corpus nhỏ (6 products, 8 FAQs, 4 policies); chưa thêm FAISS/Chroma vì chưa có benchmark chứng minh vector retrieval có lợi cho 18 records. Draft cần source; thiếu evidence thì `needs_review`. Ollama chạy local mặc định tắt và có thể bật trong `.env`:
+API nhận bình luận tại `POST /api/plugin/comments`; rule classifier chạy trước, model TF-IDF character n-gram + Logistic Regression chỉ làm fallback khi rules chưa nhận diện intent. RAG hiện dùng keyword/entity/intent-filtered retrieval trên corpus nhỏ (6 products, 8 FAQs, 4 policies); chưa thêm FAISS/Chroma vì chưa có benchmark chứng minh vector retrieval có lợi cho 18 records. Draft cần source; thiếu evidence thì `needs_review`. Ollama chạy local mặc định tắt và có thể bật trong `.env`:
 
 ```env
 OLLAMA_ENABLED=false

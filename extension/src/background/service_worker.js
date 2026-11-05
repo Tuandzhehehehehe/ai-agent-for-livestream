@@ -1,7 +1,44 @@
 const BACKEND_URL = 'http://localhost:8000/api/plugin/comments';
+const tabEnabledState = new Map();
+let fallbackEnabled = false;
 
-chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
-  if (request.type !== 'NEW_COMMENT') return;
+function isTabEnabled(tabId) {
+  if (typeof tabId === 'number') {
+    return tabEnabledState.get(tabId) ?? false;
+  }
+  return fallbackEnabled;
+}
+
+chrome.tabs?.onRemoved?.addListener((tabId) => {
+  tabEnabledState.delete(tabId);
+});
+
+chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+  const tabId = sender.tab?.id;
+
+  if (request.type === 'SET_ENABLED') {
+    const enabled = Boolean(request.enabled);
+    if (typeof tabId === 'number') {
+      tabEnabledState.set(tabId, enabled);
+      chrome.tabs.sendMessage(tabId, { type: 'AI_STATE_CHANGED', enabled }).catch(() => {});
+    } else {
+      fallbackEnabled = enabled;
+    }
+    sendResponse({ success: true, enabled });
+    return false;
+  }
+
+  if (request.type === 'GET_ENABLED') {
+    sendResponse({ enabled: isTabEnabled(tabId) });
+    return false;
+  }
+
+  if (request.type !== 'NEW_COMMENT') return false;
+
+  if (!isTabEnabled(tabId)) {
+    sendResponse({ success: false, disabled: true });
+    return false;
+  }
 
   fetch(BACKEND_URL, {
       method: 'POST',
@@ -9,18 +46,13 @@ chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
       body: JSON.stringify(request.payload)
     }).then(async (response) => {
       if (!response.ok) {
-        console.warn(`[YouTube Live] Backend rejected comment (${response.status})`);
         sendResponse({ success: false, status: response.status });
         return;
       }
 
       const result = await response.json();
-      if (result.moderation_status === 'blocked') {
-        console.warn(`[YouTube Live] Comment filtered (${result.moderation_reason})`);
-      }
       sendResponse({ success: true, data: result });
     }).catch((error) => {
-      console.warn(`[YouTube Live] Backend request failed (${error.name})`);
       sendResponse({ success: false, error: error.name });
     });
   return true;
