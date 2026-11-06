@@ -2,16 +2,10 @@ const BACKEND_URL = 'http://localhost:8000/api/plugin/comments';
 const tabEnabledState = new Map();
 let fallbackEnabled = false;
 
-function isTabEnabled(tabId) {
-  if (typeof tabId === 'number') {
-    return tabEnabledState.get(tabId) ?? false;
-  }
-  return fallbackEnabled;
-}
+const isTabEnabled = (tabId) =>
+  typeof tabId === 'number' ? (tabEnabledState.get(tabId) ?? false) : fallbackEnabled;
 
-chrome.tabs?.onRemoved?.addListener((tabId) => {
-  tabEnabledState.delete(tabId);
-});
+chrome.tabs?.onRemoved?.addListener((tabId) => tabEnabledState.delete(tabId));
 
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   const tabId = sender.tab?.id;
@@ -41,19 +35,16 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
 
   fetch(BACKEND_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(request.payload)
-    }).then(async (response) => {
-      if (!response.ok) {
-        sendResponse({ success: false, status: response.status });
-        return;
-      }
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(request.payload)
+  })
+    .then(async (res) =>
+      res.ok
+        ? sendResponse({ success: true, data: await res.json() })
+        : sendResponse({ success: false, status: res.status })
+    )
+    .catch((err) => sendResponse({ success: false, error: err.name }));
 
-      const result = await response.json();
-      sendResponse({ success: true, data: result });
-    }).catch((error) => {
-      sendResponse({ success: false, error: error.name });
-    });
   return true;
 });
