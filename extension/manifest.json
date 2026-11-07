@@ -1,11 +1,15 @@
+
 {
   "manifest_version": 3,
   "name": "YouTube Live Comment Collector",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Thu thap binh luan livestream YouTube theo thoi gian thuc ve AI Backend.",
+  "permissions": [
+    "storage"
+  ],
   "host_permissions": [
     "https://*.youtube.com/*",
-    "http://localhost:8000/*"
+    "http://127.0.0.1:8000/*"
   ],
   "background": {
     "service_worker": "src/background/service_worker.js",
