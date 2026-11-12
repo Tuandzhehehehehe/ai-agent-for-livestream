@@ -167,12 +167,31 @@
     if (popover) popover.hidden = true;
   }
 
+  const createThreadMessage = (sender, text, isReply = false) => {
+    const box = el(
+      'div',
+      `livestream-ai-popover-message${isReply ? ' is-reply' : ''}`
+    );
+    if (sender) {
+      box.appendChild(el('div', 'livestream-ai-popover-label', sender));
+    }
+    box.appendChild(el('div', '', text));
+    return box;
+  };
+
   function openPopover(record) {
+    if (!record) return;
+
     if (!popover || !popover.isConnected) {
       popover = document.getElementById(POPOVER_ID) || el('div');
       popover.id = POPOVER_ID;
       popover.setAttribute('role', 'dialog');
-      popover.addEventListener('click', (e) => e.stopPropagation());
+      ['click', 'keydown', 'keyup', 'keypress'].forEach((evt) => {
+        popover.addEventListener(evt, (e) => {
+          if (evt === 'keydown' && e.key === 'Escape') closePopover();
+          e.stopPropagation();
+        });
+      });
 
       (
         document.querySelector('yt-live-chat-renderer') ||
@@ -217,45 +236,84 @@
       closeBtn
     );
 
-    popover.replaceChildren(
-      header,
-      el('div', 'livestream-ai-popover-message', record.text)
-    );
+    const threadList = el('div', 'livestream-ai-thread-list');
+    threadList.appendChild(createThreadMessage(null, record.text));
 
-    if (record.answer_draft?.answer) {
-      const draftBox = el('div', 'livestream-ai-popover-section');
-
-      draftBox.append(
-        el('div', 'livestream-ai-popover-label', 'AI Suggested Draft'),
-        el('div', 'livestream-ai-popover-draft', record.answer_draft.answer)
-      );
-
-      if (record.answer_draft.sources?.length) {
-        const sources = el('div', 'livestream-ai-popover-sources');
-
-        record.answer_draft.sources.forEach((s) => {
-          sources.appendChild(
-            el(
-              'span',
-              'livestream-ai-popover-source',
-              `${s.title} (${s.source_id})`
-            )
-          );
-        });
-
-        draftBox.appendChild(sources);
-      }
-
-      popover.appendChild(draftBox);
+    if (record.answer_draft?.sources?.length) {
+      const sources = el('div', 'livestream-ai-popover-sources');
+      record.answer_draft.sources.forEach((s) => {
+        sources.appendChild(
+          el('span', 'livestream-ai-popover-source', `${s.title} (${s.source_id})`)
+        );
+      });
+      threadList.appendChild(sources);
     }
 
     const reason = record.reason || record.answer_draft?.reason;
-
     if (reason) {
-      popover.appendChild(
-        el('div', 'livestream-ai-popover-reason', reason)
-      );
+      threadList.appendChild(el('div', 'livestream-ai-popover-reason', reason));
     }
+
+    const replies = Array.isArray(record.thread_messages)
+      ? record.thread_messages
+      : [];
+    replies.forEach((m) => {
+      threadList.appendChild(createThreadMessage(m.sender, m.text, true));
+    });
+
+    const draftText = record.answer_draft?.answer || '';
+    const replyInput = el('input', 'livestream-ai-thread-input');
+    replyInput.type = 'text';
+    replyInput.placeholder = `Message ${record.sender}...`;
+    replyInput.value = !replies.length ? draftText : '';
+
+    const sendBtn = el('button', 'livestream-ai-thread-send', 'Send');
+    sendBtn.type = 'submit';
+
+    const composer = el('form', 'livestream-ai-thread-composer');
+    composer.append(replyInput, sendBtn);
+    composer.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const text = replyInput.value.trim();
+      if (!text) return;
+
+      const isAi = Boolean(draftText && text === draftText.trim());
+      const payload = {
+        sender: isAi ? 'AI Agent' : 'Moderator',
+        authorRole: isAi ? 'ai' : 'moderator',
+        text,
+        timestamp: Date.now()
+      };
+
+      replyInput.value = '';
+
+      sendRuntimeMessage(
+        {
+          type: 'SEND_THREAD_MESSAGE',
+          commentId: record.comment_id,
+          payload
+        },
+        (res, error) => {
+          const current = aiMessages.get(record.comment_id);
+          if (!current) return;
+
+          current.thread_messages =
+            !error && res?.success && Array.isArray(res.data)
+              ? res.data
+              : [...(current.thread_messages || []), payload];
+
+          aiMessages.set(record.comment_id, current);
+          if (selectedId === record.comment_id && popover && !popover.hidden) {
+            threadList.appendChild(
+              createThreadMessage(payload.sender, payload.text, true)
+            );
+            threadList.scrollTop = threadList.scrollHeight;
+          }
+        }
+      );
+    });
+
+    popover.replaceChildren(header, threadList, composer);
 
     if (aiRow?.isConnected) {
       const rect = aiRow.getBoundingClientRect();
@@ -381,11 +439,16 @@
 
         if (!cid) return;
 
+        const prev = aiMessages.get(cid);
         const record = {
-          ...aiMessages.get(cid),
+          ...prev,
           ...res.data,
+          thread_messages:
+            res.data.thread_messages?.length
+              ? res.data.thread_messages
+              : prev?.thread_messages || [],
           avatarUrl:
-            avatarUrl || aiMessages.get(cid)?.avatarUrl || ''
+            avatarUrl || prev?.avatarUrl || ''
         };
 
         aiMessages.set(cid, record);

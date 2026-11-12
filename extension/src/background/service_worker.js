@@ -3,6 +3,20 @@ const BACKEND_URL = 'http://127.0.0.1:8000/api/plugin/comments';
 
 const stateKey = (tabId) => `enabled_tab_${tabId}`;
 
+async function postJson(url, payload) {
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+
+  if (!response.ok) {
+    return { success: false, status: response.status };
+  }
+
+  return { success: true, data: await response.json() };
+}
+
 chrome.tabs.onRemoved.addListener((tabId) => {
   chrome.storage.session.remove(stateKey(tabId)).catch(() => {});
 });
@@ -57,6 +71,14 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     return true;
   }
 
+  if (request.type === 'SEND_THREAD_MESSAGE') {
+    const url = `${BACKEND_URL}/${encodeURIComponent(request.commentId || '')}/thread`;
+    postJson(url, request.payload)
+      .then(sendResponse)
+      .catch((error) => sendResponse({ success: false, error: error.message }));
+    return true;
+  }
+
   if (request.type !== 'NEW_COMMENT') {
     return false;
   }
@@ -69,41 +91,14 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   chrome.storage.session.get(stateKey(tabId))
     .then(async (result) => {
       if (!result[stateKey(tabId)]) {
-        sendResponse({
-          success: false,
-          disabled: true
-        });
+        sendResponse({ success: false, disabled: true });
         return;
       }
 
-      const response = await fetch(BACKEND_URL, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(request.payload)
-      });
-
-      if (!response.ok) {
-        sendResponse({
-          success: false,
-          status: response.status
-        });
-        return;
-      }
-
-      const data = await response.json();
-
-      sendResponse({
-        success: true,
-        data
-      });
+      sendResponse(await postJson(BACKEND_URL, request.payload));
     })
     .catch((error) => {
-      sendResponse({
-        success: false,
-        error: error.message
-      });
+      sendResponse({ success: false, error: error.message });
     });
 
   return true;

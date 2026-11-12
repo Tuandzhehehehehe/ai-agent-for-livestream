@@ -3,6 +3,7 @@
 from collections import Counter, deque
 import logging
 from pathlib import Path
+import time
 from typing import Literal
 
 from dotenv import load_dotenv
@@ -57,6 +58,19 @@ class LiveCommentPayload(BaseModel):
     timestamp: int = Field(gt=0)
 
 
+class ThreadMessage(BaseModel):
+    """Message in a comment's private thread."""
+
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    sender: str = Field(default="Moderator", min_length=1, max_length=256)
+    author_role: Literal["ai", "moderator"] = Field(
+        default="moderator", alias="authorRole"
+    )
+    text: str = Field(min_length=1, max_length=MAX_COMMENT_LENGTH)
+    timestamp: int = Field(default_factory=lambda: int(time.time() * 1000), gt=0)
+
+
 class ClassifiedLiveComment(BaseModel):
     """Accepted comment with its deterministic AI classification."""
 
@@ -73,6 +87,7 @@ class ClassifiedLiveComment(BaseModel):
     moderation_status: Literal["allowed", "blocked"] = "allowed"
     moderation_reason: str | None = None
     answer_draft: "AnswerDraftResponse | None" = None
+    thread_messages: list[ThreadMessage] = Field(default_factory=list)
 
 
 class AnswerSourceResponse(BaseModel):
@@ -196,6 +211,7 @@ def create_app(
 ) -> FastAPI:
     """Build an app with a bounded in-memory buffer for recent comments."""
     recent_comments: deque[ClassifiedLiveComment] = deque(maxlen=MAX_STORED_COMMENTS)
+    threads_by_comment: dict[str, list[ThreadMessage]] = {}
     intent_model = local_model or get_local_intent_model()
     viewer_rate_limiter = rate_limiter or configured_rate_limiter()
     moderator = content_moderator or ContentModerator.from_environment()
@@ -230,6 +246,7 @@ def create_app(
                 )
 
         result = _process_comment(payload, intent_model=intent_model, moderator=moderator)
+        result.thread_messages = threads_by_comment.setdefault(result.comment_id, [])
         recent_comments.append(result)
         return result
 
@@ -238,6 +255,18 @@ def create_app(
         limit: int = Query(default=100, ge=1, le=MAX_STORED_COMMENTS),
     ) -> list[ClassifiedLiveComment]:
         return list(reversed(recent_comments))[:limit]
+
+    @app.post(
+        "/api/plugin/comments/{comment_id:path}/thread",
+        response_model=list[ThreadMessage],
+    )
+    def post_comment_thread_message(
+        comment_id: str,
+        payload: ThreadMessage,
+    ) -> list[ThreadMessage]:
+        thread = threads_by_comment.setdefault(comment_id, [])
+        thread.append(payload)
+        return thread
 
     @app.get("/api/plugin/summary")
     def summarize_comments() -> dict[str, object]:
