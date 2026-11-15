@@ -403,7 +403,8 @@
 
     if (!sender || !text) return;
 
-    const id = node.id || `${sender}:${text}:${Date.now()}`;
+    const rawId = node.id || `${sender}-${text}-${Date.now()}`;
+    const id = rawId.replace(/[^A-Za-z0-9._@-]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 128) || `c_${Date.now()}`;
 
     if (seenIds.has(id)) return;
 
