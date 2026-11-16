@@ -101,6 +101,18 @@
   transform: translateX(16px);
 }
 
+#livestream-ai-settings-panel .livestream-ai-dashboard-item {
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+#livestream-ai-settings-panel .livestream-ai-dashboard-icon {
+  margin-left: 16px;
+  font-size: 14px;
+  font-weight: 700;
+  color: #a78bfa;
+  flex-shrink: 0;
+}
+
 #livestream-ai-message-row,
 #livestream-ai-detail-popover {
   --ai-accent: #8065C9;

@@ -605,7 +605,7 @@
     isEnabled = normalized;
 
     document
-      .querySelector(`#${PANEL_ID} .livestream-ai-menuitem`)
+      .querySelector(`#${PANEL_ID} .livestream-ai-menuitem[role="menuitemcheckbox"]`)
       ?.setAttribute('aria-checked', String(isEnabled));
 
     if (isEnabled) {
@@ -809,11 +809,46 @@
         e.stopPropagation();
       });
 
-      panel.appendChild(item);
+      const dashboardItem = el(
+        'div',
+        'livestream-ai-menuitem livestream-ai-dashboard-item'
+      );
+      dashboardItem.setAttribute('role', 'menuitem');
+      dashboardItem.tabIndex = 0;
+      dashboardItem.append(
+        el('div', 'livestream-ai-menuitem-label', 'Open AI Dashboard'),
+        el('span', 'livestream-ai-dashboard-icon', '↗')
+      );
+
+      const openDashboard = (e) => {
+        e.stopPropagation();
+        panel.classList.remove('is-open');
+        button.setAttribute('aria-expanded', 'false');
+
+        sendRuntimeMessage({ type: 'OPEN_DASHBOARD' }, (res, error) => {
+          if (error || !res?.success) {
+            window.open(
+              'http://127.0.0.1:8000/dashboard',
+              '_blank',
+              'noopener,noreferrer'
+            );
+          }
+        });
+      };
+
+      dashboardItem.addEventListener('click', openDashboard);
+      dashboardItem.addEventListener('keydown', (e) => {
+        if (e.key === ' ' || e.key === 'Enter') {
+          e.preventDefault();
+          openDashboard(e);
+        }
+      });
+
+      panel.append(item, dashboardItem);
       playerContainer.appendChild(panel);
     } else {
       panel
-        .querySelector('.livestream-ai-menuitem')
+        .querySelector('.livestream-ai-menuitem[role="menuitemcheckbox"]')
         ?.setAttribute('aria-checked', String(isEnabled));
     }
 

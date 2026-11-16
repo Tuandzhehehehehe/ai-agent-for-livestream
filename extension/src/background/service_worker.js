@@ -1,5 +1,6 @@
 
 const BACKEND_URL = 'http://127.0.0.1:8000/api/plugin/comments';
+const DASHBOARD_URL = 'http://127.0.0.1:8000/dashboard';
 
 const stateKey = (tabId) => `enabled_tab_${tabId}`;
 
@@ -68,6 +69,14 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         sendResponse({ enabled: false });
       });
 
+    return true;
+  }
+
+  if (request.type === 'OPEN_DASHBOARD') {
+    chrome.tabs
+      .create({ url: DASHBOARD_URL })
+      .then(() => sendResponse({ success: true }))
+      .catch((error) => sendResponse({ success: false, error: error.message }));
     return true;
   }
 
