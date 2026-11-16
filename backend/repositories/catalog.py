@@ -169,25 +169,43 @@ class ProductRepository(BaseTenantRepository[ProductDocument]):
                 f"does not exist in store {ctx.store_id!r}.",
             )
 
-        existing = await self.get_inventory(
-            ctx,
-            product_id=inventory.product_id,
-            variant_id=inventory.variant_id,
-        )
-        if existing is None:
-            return await self._inventory.create_in_tenant(ctx, inventory)
+        now = utc_now()
+        try:
+            raw = await self._inventory.collection.find_one_and_update(
+                {
+                    "store_id": ctx.store_id,
+                    "inventory_scope_key": inventory.inventory_scope_key,
+                },
+                {
+                    "$set": {
+                        "product_id": inventory.product_id,
+                        "variant_id": inventory.variant_id,
+                        "quantity_on_hand": inventory.quantity_on_hand,
+                        "quantity_reserved": inventory.quantity_reserved,
+                        "in_stock": inventory.in_stock,
+                        "stock_note": inventory.stock_note,
+                        "updated_at": now,
+                    },
+                    "$setOnInsert": {
+                        "store_id": ctx.store_id,
+                        "inventory_id": inventory.inventory_id,
+                        "inventory_scope_key": inventory.inventory_scope_key,
+                        "created_at": inventory.created_at or now,
+                    },
+                    "$inc": {"version": 1},
+                },
+                upsert=True,
+                return_document=ReturnDocument.AFTER,
+            )
+        except DuplicateKeyError as exc:
+            raise DuplicateDocumentError(
+                f"Duplicate inventory constraint in '{COLL_INVENTORY}' for "
+                f"inventory_id={inventory.inventory_id!r} or scope={inventory.inventory_scope_key!r}."
+            ) from exc
+        except PyMongoError as exc:
+            raise DatabaseOperationError(f"Failed to upsert inventory: {exc}") from exc
 
-        updated = await self._inventory.update_by_id(
-            ctx,
-            existing.inventory_id,
-            {
-                "quantity_on_hand": inventory.quantity_on_hand,
-                "quantity_reserved": inventory.quantity_reserved,
-                "in_stock": inventory.in_stock,
-                "stock_note": inventory.stock_note,
-            },
-            extra_operators={"$inc": {"version": 1}},
-        )
+        updated = self._inventory._deserialize(raw)
         assert updated is not None
         return updated
 
@@ -226,41 +244,49 @@ class ProductRepository(BaseTenantRepository[ProductDocument]):
         expected_version: int | None = None,
     ) -> InventoryDocument | None:
         scope_key = build_inventory_scope_key(product_id, variant_id)
-        query = self._scoped_filter(ctx, {"inventory_scope_key": scope_key}, require_write=True)
-        if expected_version is not None:
-            query["version"] = expected_version
+        base_query = self._scoped_filter(ctx, {"inventory_scope_key": scope_key}, require_write=True)
+        max_attempts = 1 if expected_version is not None else 3
 
-        current = await self._inventory._find_one(query)
-        if current is None:
-            return None
+        for _ in range(max_attempts):
+            query = dict(base_query)
+            if expected_version is not None:
+                query["version"] = expected_version
 
-        new_on_hand = max(0, current.quantity_on_hand + delta_on_hand)
-        new_reserved = max(0, current.quantity_reserved + delta_reserved)
-        in_stock = (new_on_hand - new_reserved) > 0
+            current = await self._inventory._find_one(query)
+            if current is None:
+                return None
 
-        try:
-            raw = await self._inventory.collection.find_one_and_update(
-                {
-                    "store_id": ctx.store_id,
-                    "inventory_id": current.inventory_id,
-                    "version": current.version,
-                },
-                {
-                    "$set": {
-                        "quantity_on_hand": new_on_hand,
-                        "quantity_reserved": new_reserved,
-                        "in_stock": in_stock,
-                        "updated_at": utc_now(),
+            new_on_hand = max(0, current.quantity_on_hand + delta_on_hand)
+            new_reserved = max(0, current.quantity_reserved + delta_reserved)
+            in_stock = (new_on_hand - new_reserved) > 0
+
+            try:
+                raw = await self._inventory.collection.find_one_and_update(
+                    {
+                        "store_id": ctx.store_id,
+                        "inventory_id": current.inventory_id,
+                        "version": current.version,
                     },
-                    "$inc": {"version": 1},
-                },
-                return_document=ReturnDocument.AFTER,
-            )
-            return self._inventory._deserialize(raw)
-        except DuplicateKeyError as exc:
-            raise DuplicateDocumentError("Inventory duplicate constraint violation.") from exc
-        except PyMongoError as exc:
-            raise DatabaseOperationError(f"Failed to adjust inventory: {exc}") from exc
+                    {
+                        "$set": {
+                            "quantity_on_hand": new_on_hand,
+                            "quantity_reserved": new_reserved,
+                            "in_stock": in_stock,
+                            "updated_at": utc_now(),
+                        },
+                        "$inc": {"version": 1},
+                    },
+                    return_document=ReturnDocument.AFTER,
+                )
+            except DuplicateKeyError as exc:
+                raise DuplicateDocumentError("Inventory duplicate constraint violation.") from exc
+            except PyMongoError as exc:
+                raise DatabaseOperationError(f"Failed to adjust inventory: {exc}") from exc
+
+            if raw is not None:
+                return self._inventory._deserialize(raw)
+
+        return None
 
 
 class FAQRepository(BaseTenantRepository[FAQDocument]):

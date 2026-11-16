@@ -19,6 +19,12 @@ server = [
 	"scikit-learn>=1.4",
 	"uvicorn>=0.27",
 ]
+rag = [
+	"chromadb>=0.5",
+	"faiss-cpu>=1.8",
+	"langchain-core>=0.2",
+	"langgraph>=0.2",
+]
 database = [
 	"pydantic>=2.6",
 	"pymongo>=4.9",
@@ -29,4 +35,5 @@ database = [
 include = ["ai*", "backend*"]
 
 [tool.setuptools.package-data]
-backend = ["*.json"]
+ai = ["data/synthetic/*.json", "evaluation/*.json"]
+backend = ["*.json", "*.html"]

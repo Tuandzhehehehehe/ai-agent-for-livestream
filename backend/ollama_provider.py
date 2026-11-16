@@ -132,6 +132,62 @@ class OllamaProvider:
             return None
         return cleaned
 
+    def select_tool_call(
+        self,
+        question: str,
+        *,
+        tools: list[dict[str, Any]],
+    ) -> dict[str, Any] | None:
+        """Use native Ollama function/tool calling (Llama 3.1+ / Qwen 2.5+) when enabled."""
+        if not self.is_configured or not question or not tools:
+            return None
+
+        payload = {
+            "model": self.model,
+            "stream": False,
+            "options": {"temperature": 0.0},
+            "tools": tools,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": (
+                        "You are a tool-calling assistant for a livestream sales support agent. "
+                        "Select the most appropriate tool to retrieve product, inventory, shipping, "
+                        "or return policy data for the customer's question."
+                    ),
+                },
+                {"role": "user", "content": question},
+            ],
+        }
+        try:
+            response = self._json_post(payload)
+        except RuntimeError:
+            return None
+
+        message = response.get("message") if isinstance(response, dict) else None
+        if not isinstance(message, dict):
+            return None
+        tool_calls = message.get("tool_calls")
+        if not isinstance(tool_calls, list) or not tool_calls:
+            return None
+
+        first_call = tool_calls[0]
+        if not isinstance(first_call, dict):
+            return None
+        fn = first_call.get("function")
+        if not isinstance(fn, dict) or not isinstance(fn.get("name"), str):
+            return None
+        raw_args = fn.get("arguments") or {}
+        if isinstance(raw_args, str):
+            try:
+                raw_args = json.loads(raw_args)
+            except json.JSONDecodeError:
+                raw_args = {}
+        return {
+            "name": fn["name"],
+            "arguments": raw_args if isinstance(raw_args, dict) else {},
+        }
+
 
 def get_ollama_provider() -> OllamaProvider:
     return OllamaProvider()

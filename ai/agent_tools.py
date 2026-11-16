@@ -28,6 +28,7 @@ class ToolSpec:
     name: str
     description: str
     handler: Any
+    parameters: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -119,15 +120,16 @@ def get_product_inventory(
     *,
     product_id: str | None = None,
     product_name: str | None = None,
+    query: str | None = None,
     dataset: SyntheticDataset | None = None,
 ) -> ToolResult:
     """Return a single product's synthetic inventory and price metadata."""
     try:
         records = _load_dataset(dataset)
         product: Product | None = None
-        if product_id is not None:
+        if product_id is not None and str(product_id).strip():
             product = get_product_by_id(records.products, _ensure_text(product_id, field_name="product_id"))
-        elif product_name is not None:
+        elif product_name is not None and str(product_name).strip():
             name = _ensure_text(product_name, field_name="product_name")
             product = next(
                 (candidate for candidate in records.products if candidate.name.casefold() == name.casefold()),
@@ -136,6 +138,29 @@ def get_product_inventory(
             if product is None:
                 product = next(
                     (candidate for candidate in records.products if name.casefold() in candidate.name.casefold()),
+                    None,
+                )
+        elif query is not None and str(query).strip():
+            clean_query = _ensure_text(query, field_name="query").casefold()
+            product = next(
+                (
+                    candidate
+                    for candidate in records.products
+                    if candidate.id.casefold() in clean_query
+                    or candidate.name.casefold() in clean_query
+                ),
+                None,
+            )
+            if product is None:
+                query_words = {
+                    word for word in clean_query.replace("?", " ").replace(",", " ").split() if len(word) >= 4
+                }
+                product = next(
+                    (
+                        candidate
+                        for candidate in records.products
+                        if query_words.intersection(candidate.name.casefold().split())
+                    ),
                     None,
                 )
         if product is None:
@@ -339,38 +364,117 @@ AGENT_TOOL_REGISTRY: dict[str, ToolSpec] = {
         name="search_products",
         description="Search the synthetic product catalog for product facts and storefront details.",
         handler=search_products,
+        parameters={
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Search keyword or product query from the customer.",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Maximum number of products to return (default 5).",
+                    "default": 5,
+                },
+            },
+            "required": ["query"],
+        },
     ),
     "get_product_inventory": ToolSpec(
         name="get_product_inventory",
         description="Fetch a single product's synthetic price and stock information.",
         handler=get_product_inventory,
+        parameters={
+            "type": "object",
+            "properties": {
+                "product_id": {
+                    "type": "string",
+                    "description": "Exact product ID if known (e.g. SYN-PROD-001).",
+                },
+                "product_name": {
+                    "type": "string",
+                    "description": "Product name mentioned by the viewer.",
+                },
+                "query": {
+                    "type": "string",
+                    "description": "Customer question used to match a product if ID/name is not extracted.",
+                },
+            },
+        },
     ),
     "get_shipping_policy": ToolSpec(
         name="get_shipping_policy",
         description="Return the effective synthetic shipping policy.",
         handler=get_shipping_policy,
+        parameters={
+            "type": "object",
+            "properties": {},
+        },
     ),
     "get_return_policy": ToolSpec(
         name="get_return_policy",
         description="Return the effective synthetic return policy.",
         handler=get_return_policy,
+        parameters={
+            "type": "object",
+            "properties": {},
+        },
     ),
     "aggregate_frequent_questions": ToolSpec(
         name="aggregate_frequent_questions",
         description="Group repeated customer questions using the existing operations aggregation logic.",
         handler=aggregate_frequent_questions_tool,
+        parameters={
+            "type": "object",
+            "properties": {
+                "minimum_question_frequency": {
+                    "type": "integer",
+                    "description": "Minimum count to classify a question as frequent.",
+                    "default": 2,
+                },
+            },
+        },
     ),
     "identify_recurring_issues": ToolSpec(
         name="identify_recurring_issues",
         description="Identify recurring complaint and review-worthy issue groups.",
         handler=identify_recurring_issues,
+        parameters={
+            "type": "object",
+            "properties": {},
+        },
     ),
     "summarize_livestream_session": ToolSpec(
         name="summarize_livestream_session",
         description="Summarize a livestream session using the existing synthetic-session analytics.",
         handler=summarize_livestream_session,
+        parameters={
+            "type": "object",
+            "properties": {
+                "minimum_question_frequency": {
+                    "type": "integer",
+                    "description": "Minimum count to include a repeated question.",
+                    "default": 2,
+                },
+            },
+        },
     ),
 }
+
+
+def get_tool_definitions() -> list[dict[str, Any]]:
+    """Return OpenAI / Ollama / LangChain compatible function-calling tool schemas."""
+    return [
+        {
+            "type": "function",
+            "function": {
+                "name": spec.name,
+                "description": spec.description,
+                "parameters": spec.parameters or {"type": "object", "properties": {}},
+            },
+        }
+        for spec in AGENT_TOOL_REGISTRY.values()
+    ]
 
 
 def list_agent_tools() -> tuple[str, ...]:
@@ -410,7 +514,7 @@ def execute_agent_tool(
     if tool_name == "search_products":
         return handler(query or "", limit=5, dataset=dataset)
     if tool_name == "get_product_inventory":
-        return handler(product_id=product_id, product_name=product_name, dataset=dataset)
+        return handler(product_id=product_id, product_name=product_name, query=query, dataset=dataset)
     if tool_name == "get_shipping_policy":
         return handler(dataset=dataset)
     if tool_name == "get_return_policy":

@@ -3,21 +3,27 @@
 from collections import Counter, deque
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+import hashlib
 import logging
 import os
 from pathlib import Path
 import re
 import time
-from typing import Literal
+from typing import Any, Literal
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Query
-from pydantic import BaseModel, ConfigDict, Field
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from ai.agent_tools import execute_agent_tool, get_tool_definitions
 from ai.customer_qa import CustomerQuestionRequest, draft_customer_answer
 from ai.customer_qa.safety import MAX_CUSTOMER_MESSAGE_LENGTH
 from ai.customer_qa.schemas import AnswerStatus, Intent, SourceType
-from ai.operations import SimulatedComment, classify_comment
+from ai.multi_agent import MultiAgentOrchestrator, compute_lead_score
+from ai.operations import CommentClassification, SimulatedComment, classify_comment
+from ai.vector_rag import get_vector_rag_store
 from backend.chat_safety import (
     ContentModerator,
     ViewerRateLimiter,
@@ -31,6 +37,24 @@ logger = logging.getLogger(__name__)
 load_dotenv(Path(__file__).resolve().parents[1] / ".env", override=False)
 MAX_STORED_COMMENTS = 1000
 MAX_COMMENT_LENGTH = 16_384
+ANSWERABLE_INTENTS = frozenset(
+    {
+        "shipping_policy",
+        "return_policy",
+        "promotion_question",
+        "stock_question",
+        "price_question",
+        "product_information",
+    }
+)
+LOCAL_MODEL_REVIEW_REASONS = {
+    "prompt_injection": "The local model detected a possible prompt injection.",
+    "refund_request": "Refund requests require human handling.",
+    "price_change_request": "Price changes require human handling.",
+    "consequential_action": "This action requires human handling.",
+    "complaint": "A customer complaint may require operator intervention.",
+    "spam_or_irrelevant": "This comment may be unrelated or spam.",
+}
 
 
 class LiveCommentPayload(BaseModel):
@@ -69,12 +93,31 @@ class ClassifiedLiveComment(BaseModel):
     intent: Intent
     intent_source: Literal["rules", "local_model"] = "rules"
     intent_confidence: float | None = None
+    lead_score: int = 0
+    lead_label: Literal["hot", "warm", "cold"] = "cold"
     needs_human_review: bool
     reason: str | None = None
     moderation_status: Literal["allowed", "blocked"] = "allowed"
     moderation_reason: str | None = None
     answer_draft: "AnswerDraftResponse | None" = None
     thread_messages: list[ThreadMessage] = Field(default_factory=list)
+
+
+class AgentChatRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    text: str = Field(min_length=1, max_length=MAX_COMMENT_LENGTH)
+    sender: str = Field(default="Viewer", min_length=1, max_length=256)
+    author_type: str = Field(default="viewer", min_length=1, max_length=64)
+    session_id: str | None = None
+
+
+class VectorRAGSearchRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    query: str = Field(min_length=1, max_length=1000)
+    top_k: int = Field(default=5, ge=1, le=20)
+    source_type: SourceType | None = None
 
 
 class AnswerSourceResponse(BaseModel):
@@ -95,7 +138,20 @@ class AnswerDraftResponse(BaseModel):
 
 
 def _to_safe_id(raw_id: str) -> str:
-    return re.sub(r"[^A-Za-z0-9._@-]+", "_", raw_id.strip()).strip("_")[:128] or "id"
+    cleaned = re.sub(r"[^A-Za-z0-9._@-]+", "_", raw_id.strip()).strip("_")
+    if not cleaned:
+        return "id"
+    if len(cleaned) <= 128:
+        return cleaned
+    digest = hashlib.sha1(cleaned.encode("utf-8")).hexdigest()[:12]
+    return f"{cleaned[:115]}_{digest}"
+
+
+def _safe_timestamp_to_datetime(timestamp_ms: int) -> datetime:
+    try:
+        return datetime.fromtimestamp(timestamp_ms / 1000.0, tz=timezone.utc)
+    except (OverflowError, OSError, ValueError):
+        return utc_now()
 
 
 def _process_comment(
@@ -127,7 +183,6 @@ def _process_comment(
     )
     intent_source: Literal["rules", "local_model"] = "rules"
     intent_confidence = None
-    override_intent: Intent | None = None
     if (
         classification.intent == "unknown"
         and len(payload.text) <= MAX_CUSTOMER_MESSAGE_LENGTH
@@ -136,41 +191,65 @@ def _process_comment(
         intent_confidence = prediction.confidence
         if prediction.intent != "unknown":
             intent_source = "local_model"
-            override_intent = prediction.intent
-
-    draft = draft_customer_answer(
-        CustomerQuestionRequest(
-            session_id=session_id,
-            comment_id=safe_comment_id,
-            text=payload.text,
-        ),
-        intent_override=override_intent,
-    )
+            review_reason = LOCAL_MODEL_REVIEW_REASONS.get(prediction.intent)
+            classification = CommentClassification(
+                comment_id=safe_comment_id,
+                intent=prediction.intent,
+                needs_human_review=review_reason is not None,
+                reason=review_reason,
+            )
 
     answer_draft = None
+    final_intent = classification.intent
+    needs_human_review = classification.needs_human_review
+    reason = classification.reason
+
     if author_type in {"viewer", "member"} and (
-        draft.status == "answered"
-        or draft.sources
+        classification.intent in ANSWERABLE_INTENTS
         or "?" in payload.text
         or "？" in payload.text
     ):
-        answer_draft = AnswerDraftResponse(
-            answer=draft.answer,
-            intent=draft.intent,
-            sources=[
-                AnswerSourceResponse(
-                    source_type=source.source_type,
-                    source_id=source.source_id,
-                    title=source.title,
-                    excerpt=source.excerpt,
-                )
-                for source in draft.sources
-            ],
-            status=draft.status,
-            needs_human_review=draft.needs_human_review,
-            reason=draft.reason,
-            is_draft=draft.is_draft,
+        draft = draft_customer_answer(
+            CustomerQuestionRequest(
+                session_id=session_id,
+                comment_id=safe_comment_id,
+                text=payload.text,
+            ),
+            intent_override=(
+                classification.intent if intent_source == "local_model" else None
+            ),
         )
+        if final_intent == "unknown" and draft.intent != "unknown":
+            final_intent = draft.intent
+        if final_intent in ANSWERABLE_INTENTS:
+            needs_human_review = draft.needs_human_review
+            reason = draft.reason
+
+        if (
+            draft.status == "answered"
+            or draft.sources
+            or "?" in payload.text
+            or "？" in payload.text
+        ):
+            answer_draft = AnswerDraftResponse(
+                answer=draft.answer,
+                intent=draft.intent,
+                sources=[
+                    AnswerSourceResponse(
+                        source_type=source.source_type,
+                        source_id=source.source_id,
+                        title=source.title,
+                        excerpt=source.excerpt,
+                    )
+                    for source in draft.sources
+                ],
+                status=draft.status,
+                needs_human_review=draft.needs_human_review,
+                reason=draft.reason,
+                is_draft=draft.is_draft,
+            )
+
+    lead_score, lead_label = compute_lead_score(payload.text, final_intent)
 
     return ClassifiedLiveComment(
         comment_id=safe_comment_id,
@@ -178,11 +257,13 @@ def _process_comment(
         text=payload.text,
         author_type=payload.author_type,
         timestamp=payload.timestamp,
-        intent=draft.intent,
+        intent=final_intent,
         intent_source=intent_source,
         intent_confidence=intent_confidence,
-        needs_human_review=draft.needs_human_review,
-        reason=draft.reason,
+        lead_score=lead_score,
+        lead_label=lead_label,
+        needs_human_review=needs_human_review,
+        reason=reason,
         moderation_status="allowed",
         answer_draft=answer_draft,
     )
@@ -211,9 +292,27 @@ def create_app(
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         app.state.db = None
+        mongo_connected = False
+        redis_connected = False
         try:
-            async with database_lifespan(mongo_manager, redis_manager):
-                facade = StoreDatabaseFacade(mongo_manager, redis_manager)
+            await mongo_manager.connect()
+            await initialize_database(mongo_manager.database)
+            mongo_connected = True
+        except DatabaseError as exc:
+            logger.warning("MongoDB unavailable, using in-memory mode: %s", exc)
+
+        if mongo_connected:
+            try:
+                await redis_manager.connect()
+                redis_connected = True
+            except DatabaseError as exc:
+                logger.warning("Redis unavailable, continuing with MongoDB only: %s", exc)
+
+            try:
+                facade = StoreDatabaseFacade(
+                    mongo_manager,
+                    redis_manager if redis_connected else None,
+                )
                 if await facade.sessions.get_by_id(tenant_ctx, session_id) is None:
                     await facade.sessions.create_session(
                         tenant_ctx,
@@ -226,12 +325,38 @@ def create_app(
                         ),
                     )
                 app.state.db = facade
-                yield
-        except DatabaseError as exc:
-            logger.warning("Database unavailable, using in-memory mode: %s", exc)
+            except DatabaseError as exc:
+                logger.warning("Database session initialization failed, using in-memory mode: %s", exc)
+
+        try:
             yield
+        finally:
+            if redis_connected:
+                await redis_manager.close()
+            if mongo_connected:
+                await mongo_manager.close()
 
     app = FastAPI(title="Livestream AI Backend", version="0.1.0", lifespan=lifespan)
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=False,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+    orchestrator = MultiAgentOrchestrator(
+        intent_model=intent_model,
+        moderator=moderator,
+    )
+    vector_store = get_vector_rag_store()
+    dashboard_path = Path(__file__).resolve().parent / "dashboard.html"
+
+    @app.get("/", response_class=HTMLResponse, include_in_schema=False)
+    @app.get("/dashboard", response_class=HTMLResponse)
+    def serve_dashboard() -> HTMLResponse:
+        if dashboard_path.is_file():
+            return HTMLResponse(dashboard_path.read_text(encoding="utf-8"))
+        return HTMLResponse("<h1>Livestream AI Backend is running</h1>")
 
     @app.get("/health")
     async def health() -> dict[str, str | int | bool | None]:
@@ -248,6 +373,8 @@ def create_app(
             "ollama_model": ollama.model or None,
             "mongo_status": mongo_ping.get("status"),
             "redis_status": redis_ping.get("status"),
+            "orchestrator_backend": orchestrator.architecture_summary["orchestrator_backend"],
+            "vector_rag_backend": vector_store.backend,
         }
 
     @app.post("/api/plugin/comments", response_model=ClassifiedLiveComment)
@@ -271,13 +398,17 @@ def create_app(
             intent_model=intent_model,
             moderator=moderator,
         )
+        if len(recent_comments) == MAX_STORED_COMMENTS:
+            evicted = recent_comments[0]
+            if evicted.comment_id != result.comment_id:
+                threads_by_comment.pop(evicted.comment_id, None)
         result.thread_messages = threads_by_comment.setdefault(result.comment_id, [])
         recent_comments.append(result)
 
         facade: StoreDatabaseFacade | None = getattr(app.state, "db", None)
         if facade is not None:
             try:
-                await facade.record_comment_with_operational_sync(
+                persistence = await facade.record_comment_with_operational_sync(
                     tenant_ctx,
                     LivestreamCommentDocument(
                         store_id=store_id,
@@ -286,16 +417,29 @@ def create_app(
                         platform="youtube",
                         user_handle=result.sender[:256],
                         message=result.text[:1000],
-                        timestamp=datetime.fromtimestamp(
-                            result.timestamp / 1000, tz=timezone.utc
-                        ),
+                        timestamp=_safe_timestamp_to_datetime(result.timestamp),
                         intent=result.intent,
                         intent_confidence=result.intent_confidence,
+                        lead_label=result.lead_label,
+                        lead_score=result.lead_score,
                         safety_blocked=result.moderation_status == "blocked",
                         safety_reason=result.moderation_reason,
                     ),
                 )
-                if result.answer_draft and result.answer_draft.answer:
+                if persistence.inserted_into_mongo and (
+                    result.lead_label == "hot" or result.answer_draft is not None
+                ):
+                    await facade.sessions.increment_metrics(
+                        tenant_ctx,
+                        session_id,
+                        high_lead_comments=1 if result.lead_label == "hot" else 0,
+                        drafts_generated=1 if result.answer_draft is not None else 0,
+                    )
+                if (
+                    persistence.inserted_into_mongo
+                    and result.answer_draft
+                    and result.answer_draft.answer
+                ):
                     await facade.answer_drafts.save_draft(
                         tenant_ctx,
                         AnswerDraftDocument(
@@ -318,7 +462,7 @@ def create_app(
                             ],
                         ),
                     )
-            except DatabaseError as exc:
+            except (DatabaseError, ValidationError) as exc:
                 logger.warning("Failed to persist comment %s: %s", result.comment_id, exc)
 
         return result
@@ -362,6 +506,7 @@ def create_app(
     @app.get("/api/plugin/summary")
     def summarize_comments() -> dict[str, object]:
         intent_counts = Counter(comment.intent for comment in recent_comments)
+        lead_counts = Counter(comment.lead_label for comment in recent_comments)
         return {
             "comment_count": len(recent_comments),
             "moderated_comment_count": sum(
@@ -370,7 +515,59 @@ def create_app(
             "needs_human_review_count": sum(
                 comment.needs_human_review for comment in recent_comments
             ),
+            "hot_lead_count": lead_counts.get("hot", 0),
+            "lead_counts": dict(sorted(lead_counts.items())),
             "intent_counts": dict(sorted(intent_counts.items())),
+        }
+
+    @app.get("/api/agent/architecture")
+    def get_agent_architecture() -> dict[str, Any]:
+        return orchestrator.architecture_summary
+
+    @app.get("/api/agent/tools")
+    def list_tools() -> dict[str, Any]:
+        return {
+            "count": len(get_tool_definitions()),
+            "tools": get_tool_definitions(),
+        }
+
+    @app.post("/api/agent/chat")
+    def run_multi_agent_chat(payload: AgentChatRequest) -> dict[str, Any]:
+        exec_result = orchestrator.run(
+            text=payload.text,
+            session_id=payload.session_id or session_id,
+            comment_id=_to_safe_id(f"agent-{int(time.time() * 1000)}"),
+            sender=payload.sender,
+            author_type=payload.author_type,
+        )
+        return {
+            "orchestrator_backend": exec_result.orchestrator_backend,
+            "vector_backend": exec_result.vector_backend,
+            "state": exec_result.state,
+        }
+
+    @app.post("/api/agent/rag/search")
+    def search_vector_rag(payload: VectorRAGSearchRequest) -> dict[str, Any]:
+        hits = vector_store.search(
+            payload.query,
+            top_k=payload.top_k,
+            source_type=payload.source_type,
+        )
+        return {
+            "query": payload.query,
+            "backend": vector_store.backend,
+            "count": len(hits),
+            "hits": [
+                {
+                    "source_type": hit.source_type,
+                    "source_id": hit.source_id,
+                    "title": hit.title,
+                    "excerpt": hit.excerpt,
+                    "score": hit.score,
+                    "backend": hit.backend,
+                }
+                for hit in hits
+            ],
         }
 
     return app

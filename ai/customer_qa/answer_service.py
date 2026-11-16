@@ -88,45 +88,50 @@ def draft_customer_answer(
         if intent == "unknown":
             return _review(intent, _ACTION_INTENTS[intent])
     references = retrieve_evidence(request.text, intent=intent, dataset=records)
-    if references:
-        evidence_text = tuple(
-            f"[{reference.source_type}:{reference.source_id}] {reference.title}: {reference.excerpt}"
-            for reference in references
-        )
-        llm_answer = generate_answer_with_ollama(request.text, evidence=evidence_text)
-        if llm_answer is not None:
-            uncertain = any(
-                keyword in llm_answer.casefold()
-                for keyword in (
-                    "not certain",
-                    "uncertain",
-                    "insufficient evidence",
-                    "not enough information",
-                    "needs review",
-                    "ask an operator",
-                    "requires operator",
-                )
-            )
-            if uncertain:
-                return _review(
-                    intent,
-                    "The local LLM could not answer confidently from the supplied evidence; operator review is required.",
-                    references=references,
-                )
-            return CustomerAnswerDraft(
-                answer=llm_answer,
-                intent=intent,
-                sources=references,
-                status="answered",
-                needs_human_review=False,
-                reason="Draft generated from local Ollama using retrieved evidence.",
-                is_draft=True,
-            )
     if intent in {"shipping_policy", "return_policy", "promotion_question"}:
-        return _answer_policy_question(request.text, intent, references)
-    if intent in {"price_question", "stock_question", "product_information"}:
-        return _answer_product_question(request.text, intent, records, references)
-    return _review(intent, "No supported answer rule exists for this intent.")
+        draft = _answer_policy_question(request.text, intent, references)
+    elif intent in {"price_question", "stock_question", "product_information"}:
+        draft = _answer_product_question(request.text, intent, records, references)
+    else:
+        return _review(intent, "No supported answer rule exists for this intent.")
+
+    if draft.status != "answered" or draft.needs_human_review or not draft.sources:
+        return draft
+
+    evidence_text = tuple(
+        f"[{reference.source_type}:{reference.source_id}] {reference.title}: {reference.excerpt}"
+        for reference in draft.sources
+    )
+    llm_answer = generate_answer_with_ollama(request.text, evidence=evidence_text)
+    if llm_answer is not None:
+        uncertain = any(
+            keyword in llm_answer.casefold()
+            for keyword in (
+                "not certain",
+                "uncertain",
+                "insufficient evidence",
+                "not enough information",
+                "needs review",
+                "ask an operator",
+                "requires operator",
+            )
+        )
+        if uncertain:
+            return _review(
+                intent,
+                "The local LLM could not answer confidently from the supplied evidence; operator review is required.",
+                references=draft.sources,
+            )
+        return CustomerAnswerDraft(
+            answer=llm_answer,
+            intent=intent,
+            sources=draft.sources,
+            status="answered",
+            needs_human_review=False,
+            reason="Draft generated from local Ollama using retrieved evidence.",
+            is_draft=True,
+        )
+    return draft
 
 
 def _answer_policy_question(

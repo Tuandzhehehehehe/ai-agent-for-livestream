@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Livestream AI Multi-Agent & RAG Dashboard</title>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: #0f172a;
+      color: #f8fafc;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
+    .container { max-width: 1280px; margin: 0 auto; padding: 24px; }
+    .card { background: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 18px; }
+    .grid-4 { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; margin-bottom: 20px; }
+    .grid-2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(460px, 1fr)); gap: 20px; margin-bottom: 20px; }
+    .grid-5 { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }
+    .badge { display: inline-block; padding: 3px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; background: #334155; color: #e2e8f0; }
+    .badge.hot { background: rgba(16, 185, 129, 0.2); color: #6ee7b7; }
+    .badge.warm { background: rgba(245, 158, 11, 0.2); color: #fcd34d; }
+    .badge.review { background: rgba(239, 68, 68, 0.2); color: #fca5a5; }
+    input { flex: 1; padding: 8px 12px; border-radius: 8px; border: 1px solid #475569; background: #0f172a; color: #f8fafc; }
+    button { padding: 8px 16px; border-radius: 8px; border: 0; background: #7c3aed; color: #fff; font-weight: 600; cursor: pointer; }
+    button.secondary { background: #2563eb; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script>
+    const e = React.createElement;
+    const { useState, useEffect } = React;
+
+    function DashboardApp() {
+      const [health, setHealth] = useState(null);
+      const [arch, setArch] = useState(null);
+      const [summary, setSummary] = useState(null);
+      const [comments, setComments] = useState([]);
+      const [question, setQuestion] = useState('What is the price and stock of the Aurora Ring Light?');
+      const [agentOutput, setAgentOutput] = useState(null);
+      const [ragQuery, setRagQuery] = useState('shipping policy delivery days');
+      const [ragHits, setRagHits] = useState([]);
+
+      const refresh = async () => {
+        try {
+          const [h, a, s, c] = await Promise.all([
+            fetch('/health').then(r => r.json()),
+            fetch('/api/agent/architecture').then(r => r.json()),
+            fetch('/api/plugin/summary').then(r => r.json()),
+            fetch('/api/plugin/comments?limit=20').then(r => r.json()),
+          ]);
+          setHealth(h);
+          setArch(a);
+          setSummary(s);
+          setComments(c);
+        } catch (_) {}
+      };
+
+      useEffect(() => {
+        refresh();
+        const id = setInterval(refresh, 4000);
+        return () => clearInterval(id);
+      }, []);
+
+      const runAgent = async (ev) => {
+        ev.preventDefault();
+        if (!question.trim()) return;
+        const res = await fetch('/api/agent/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text: question, sender: 'OperatorTest', author_type: 'viewer' }),
+        });
+        if (res.ok) setAgentOutput(await res.json());
+      };
+
+      const runRag = async (ev) => {
+        ev.preventDefault();
+        if (!ragQuery.trim()) return;
+        const res = await fetch('/api/agent/rag/search', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ query: ragQuery, top_k: 4 }),
+        });
+        if (res.ok) {
+          const d = await res.json();
+          setRagHits(d.hits || []);
+        }
+      };
+
+      return e('div', { className: 'container' },
+        e('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 } },
+          e('div', null,
+            e('h1', { style: { margin: 0, fontSize: 24, color: '#c4b5fd' } }, 'Livestream Sales Multi-Agent & RAG Console'),
+            e('p', { style: { margin: '4px 0 0', color: '#94a3b8', fontSize: 13 } },
+              `Orchestrator: ${health?.orchestrator_backend || 'stategraph'} • Vector RAG: ${health?.vector_rag_backend || 'local_vector'} • Ollama: ${health?.ollama_enabled ? 'enabled' : 'fallback mode'}`
+            )
+          ),
+          e('span', { className: 'badge' }, `Mongo: ${health?.mongo_status || 'n/a'} | Redis: ${health?.redis_status || 'n/a'}`)
+        ),
+        e('div', { className: 'grid-4' },
+          e('div', { className: 'card' }, e('div', { style: { fontSize: 12, color: '#94a3b8' } }, 'Total Comments'), e('div', { style: { fontSize: 28, fontWeight: 700 } }, summary?.comment_count ?? 0)),
+          e('div', { className: 'card' }, e('div', { style: { fontSize: 12, color: '#94a3b8' } }, 'Hot Buyer Leads'), e('div', { style: { fontSize: 28, fontWeight: 700, color: '#34d399' } }, summary?.hot_lead_count ?? 0)),
+          e('div', { className: 'card' }, e('div', { style: { fontSize: 12, color: '#94a3b8' } }, 'Needs Human Review'), e('div', { style: { fontSize: 28, fontWeight: 700, color: '#fbbf24' } }, summary?.needs_human_review_count ?? 0)),
+          e('div', { className: 'card' }, e('div', { style: { fontSize: 12, color: '#94a3b8' } }, 'Blocked by Safety Guard'), e('div', { style: { fontSize: 28, fontWeight: 700, color: '#f87171' } }, summary?.moderated_comment_count ?? 0))
+        ),
+        e('div', { className: 'grid-2' },
+          e('div', { className: 'card' },
+            e('h3', { style: { marginTop: 0, color: '#ddd6fe' } }, 'Multi-Agent + Tool Calling Playground'),
+            e('form', { onSubmit: runAgent, style: { display: 'flex', gap: 8, marginBottom: 12 } },
+              e('input', { value: question, onChange: ev => setQuestion(ev.target.value) }),
+              e('button', { type: 'submit' }, 'Run Agents')
+            ),
+            agentOutput?.state && e('div', { style: { fontSize: 13 } },
+              e('div', { style: { padding: 10, borderRadius: 8, background: '#0f172a', marginBottom: 8 } },
+                e('strong', null, 'Draft Reply: '), agentOutput.state.answer_draft?.answer,
+                e('div', { style: { marginTop: 6, color: '#a78bfa', fontSize: 12 } },
+                  `Intent: ${agentOutput.state.intent} | Lead: ${agentOutput.state.lead_label} (${agentOutput.state.lead_score}/100) | Tool: ${agentOutput.state.selected_tool || 'none'}`
+                )
+              ),
+              (agentOutput.state.agent_trace || []).map((st, idx) =>
+                e('div', { key: idx, style: { padding: '6px 8px', background: '#0f172a', borderRadius: 6, marginTop: 4 } },
+                  e('strong', { style: { color: '#c4b5fd' } }, st.agent), `: ${st.detail}`
+                )
+              )
+            )
+          ),
+          e('div', { className: 'card' },
+            e('h3', { style: { marginTop: 0, color: '#ddd6fe' } }, 'Vector RAG Semantic Search'),
+            e('form', { onSubmit: runRag, style: { display: 'flex', gap: 8, marginBottom: 12 } },
+              e('input', { value: ragQuery, onChange: ev => setRagQuery(ev.target.value) }),
+              e('button', { type: 'submit', className: 'secondary' }, 'Search RAG')
+            ),
+            ragHits.map((h, idx) =>
+              e('div', { key: idx, style: { padding: 10, background: '#0f172a', borderRadius: 8, marginTop: 8, fontSize: 13 } },
+                e('div', { style: { display: 'flex', justifyContent: 'space-between', color: '#93c5fd', fontWeight: 600 } },
+                  e('span', null, `[${h.source_type}] ${h.title} (${h.source_id})`),
+                  e('span', null, `score: ${h.score}`)
+                ),
+                e('div', { style: { marginTop: 4, color: '#cbd5e1' } }, h.excerpt)
+              )
+            )
+          )
+        ),
+        e('div', { className: 'card', style: { marginBottom: 20 } },
+          e('h3', { style: { marginTop: 0, color: '#ddd6fe' } }, 'Multi-Agent System Pipeline'),
+          e('div', { className: 'grid-5' },
+            (arch?.agents || []).map(ag =>
+              e('div', { key: ag.id, style: { padding: 12, background: '#0f172a', borderRadius: 8, border: '1px solid #475569' } },
+                e('div', { style: { fontWeight: 600, color: '#c4b5fd', fontSize: 13 } }, ag.name),
+                e('div', { style: { marginTop: 6, fontSize: 12, color: '#94a3b8' } }, ag.role)
+              )
+            )
+          )
+        ),
+        e('div', { className: 'card' },
+          e('h3', { style: { marginTop: 0, color: '#ddd6fe' } }, 'Live YouTube Comments Stream'),
+          comments.map(c =>
+            e('div', { key: c.comment_id, style: { padding: 12, background: '#0f172a', borderRadius: 8, marginTop: 8 } },
+              e('div', { style: { display: 'flex', justifyContent: 'space-between', fontSize: 13 } },
+                e('strong', null, c.sender),
+                e('div', { style: { display: 'flex', gap: 6 } },
+                  e('span', { className: 'badge' }, c.intent),
+                  e('span', { className: `badge ${c.lead_label}` }, `Lead: ${c.lead_label} (${c.lead_score})`),
+                  c.needs_human_review && e('span', { className: 'badge review' }, 'Needs Review')
+                )
+              ),
+              e('div', { style: { marginTop: 6 } }, c.text),
+              c.answer_draft?.answer && e('div', { style: { marginTop: 8, padding: 8, borderRadius: 6, background: '#1e1b4b', color: '#ddd6fe', fontSize: 13 } },
+                e('strong', null, 'AI Draft: '), c.answer_draft.answer
+              )
+            )
+          )
+        )
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(e(DashboardApp));
+  </script>
+</body>
+</html>

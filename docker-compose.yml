@@ -6,7 +6,7 @@ services:
     environment:
       MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USERNAME:?MONGO_ROOT_USERNAME is required}
       MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:?MONGO_ROOT_PASSWORD is required}
-      MONGO_INITDB_DATABASE: ${MONGODB_DATABASE:-livestream_sales}
+      MONGO_INITDB_DATABASE: ${MONGODB_DATABASE:-livestream_sales_db}
     ports:
       - "127.0.0.1:${MONGODB_PORT:-27017}:27017"
     volumes:

@@ -2,34 +2,45 @@
 
 ## Scope
 
-The `ai` Python package contains data processing, retrieval, customer Q&A,
-operations assistance, and deterministic evaluation. The repository also
-contains a local FastAPI backend, a read-only YouTube
-Live collector, and MongoDB/Redis infrastructure modules. The database modules
-are not yet wired into the live API routes, which still use in-memory storage.
-Authentication, approval UI, and transaction execution are not implemented.
+The `ai` Python package contains multi-agent orchestration, vector/hybrid RAG
+retrieval, tool/function calling, customer Q&A, operations assistance, and
+deterministic evaluation. The repository also contains a FastAPI backend wired
+to multi-tenant MongoDB/Redis infrastructure (with automatic in-memory fallback),
+a React / Next.js operator dashboard (`frontend/` and `/dashboard`), and a
+YouTube Live browser extension with private moderator/AI comment threads.
 
 ## Module boundaries
 
-- `ai.schemas`: typed request, response, and source-reference models.
-- `ai.data`: validated loading of explicitly synthetic catalog, FAQ, and
-  policy records.
-- `ai.retrieval`: deterministic search over approved records.
-- `ai.customer_qa`: intent classification, safety checks, evidence selection,
-  and draft response decisions.
+- `ai.multi_agent`: Multi-Agent StateGraph orchestrator (`LangGraph` compatible
+  with built-in graph execution fallback) coordinating 5 specialized agents:
+  `ModerationGuardAgent`, `IntentTriageAgent`, `ToolCallingRAGAgent`,
+  `AnswerSynthesisReviewAgent`, and `OperationsAnalyticsAgent`.
+- `ai.vector_rag`: Hybrid Vector RAG store supporting `FAISS`, `ChromaDB`, and
+  built-in cosine similarity vector embeddings over products, FAQs, and active
+  sales policies.
+- `ai.agent_tools`: OpenAI / Ollama / LangChain compatible function-calling tool
+  registry and schemas (`get_tool_definitions`, `execute_agent_tool`).
+- `ai.schemas` / `ai.customer_qa`: typed request, response, intent classification,
+  safety checks, evidence selection, and draft response decisions.
+- `ai.data`: validated loading of synthetic catalog, FAQ, and policy records.
 - `ai.operations`: comment classification, question aggregation, session
   summaries, and evidence-backed recommendations.
 - `ai.evaluation`: reproducible scenarios and metrics; measured results must
   be kept distinct from target thresholds.
 - `backend.local_model`: local TF-IDF character n-gram and Logistic Regression
   intent classifier, trained from `backend/intent_training_data.json`.
-- `backend.main`: HTTP ingestion, rate limiting, moderation, retrieval-backed
-  answer drafts, and in-memory summaries.
+- `backend.ollama_provider`: local Ollama LLM client supporting both evidence-grounded
+  answer synthesis and native LLM tool/function calling (`Qwen` / `Llama`).
+- `backend.main`: HTTP ingestion, multi-agent & RAG endpoints, rate limiting,
+  moderation, private comment threads, and MongoDB/Redis persistence via
+  `StoreDatabaseFacade`.
 - `backend.database`, `backend.repositories`, `backend.infrastructure`:
   multi-tenant MongoDB/Redis managers, models, repositories, cache, and stream
-  primitives. These are currently a separate integration layer, not the live
-  route persistence implementation.
-- `extension`: YouTube Live comment collector; it does not post chat messages.
+  primitives.
+- `frontend`: Next.js / React operator dashboard for monitoring the multi-agent
+  pipeline, testing Vector RAG & tool calling, and reviewing live comments.
+- `extension`: YouTube Live assistant extension with chip strip and private
+  moderator/AI comment threads.
 
 The `ai.data` package provides typed product, FAQ, and policy records, validates
 the bundled JSON files, and exposes simple access and keyword-search

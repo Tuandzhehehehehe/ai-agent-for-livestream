@@ -72,7 +72,12 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
 
   if (request.type === 'SEND_THREAD_MESSAGE') {
-    const url = `${BACKEND_URL}/${encodeURIComponent(request.commentId || '')}/thread`;
+    const commentId = String(request.commentId || '').trim();
+    if (!commentId) {
+      sendResponse({ success: false, error: 'Missing comment ID' });
+      return false;
+    }
+    const url = `${BACKEND_URL}/${encodeURIComponent(commentId)}/thread`;
     postJson(url, request.payload)
       .then(sendResponse)
       .catch((error) => sendResponse({ success: false, error: error.message }));

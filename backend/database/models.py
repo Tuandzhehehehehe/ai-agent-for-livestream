@@ -223,7 +223,7 @@ class InventoryDocument(TenantDocumentModel):
         expected_key = build_inventory_scope_key(self.product_id, self.variant_id)
         if self.inventory_scope_key != expected_key:
             object.__setattr__(self, "inventory_scope_key", expected_key)
-        if (self.quantity_on_hand - self.quantity_reserved) <= 0 and self.quantity_on_hand == 0:
+        if (self.quantity_on_hand - self.quantity_reserved) <= 0:
             object.__setattr__(self, "in_stock", False)
         return self
 

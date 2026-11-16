@@ -286,6 +286,8 @@
       };
 
       replyInput.value = '';
+      replyInput.disabled = true;
+      sendBtn.disabled = true;
 
       sendRuntimeMessage(
         {
@@ -294,20 +296,32 @@
           payload
         },
         (res, error) => {
+          replyInput.disabled = false;
+          sendBtn.disabled = false;
+
           const current = aiMessages.get(record.comment_id);
           if (!current) return;
 
-          current.thread_messages =
-            !error && res?.success && Array.isArray(res.data)
-              ? res.data
-              : [...(current.thread_messages || []), payload];
+          if (error || !res?.success) {
+            replyInput.value = text;
+            return;
+          }
+
+          current.thread_messages = Array.isArray(res.data)
+            ? res.data
+            : [...(current.thread_messages || []), payload];
 
           aiMessages.set(record.comment_id, current);
           if (selectedId === record.comment_id && popover && !popover.hidden) {
-            threadList.appendChild(
-              createThreadMessage(payload.sender, payload.text, true)
+            const liveThreadList = popover.querySelector(
+              '.livestream-ai-thread-list'
             );
-            threadList.scrollTop = threadList.scrollHeight;
+            if (liveThreadList) {
+              liveThreadList.appendChild(
+                createThreadMessage(payload.sender, payload.text, true)
+              );
+              liveThreadList.scrollTop = liveThreadList.scrollHeight;
+            }
           }
         }
       );
@@ -591,19 +605,34 @@
         enabled: isEnabled
       });
 
-      document
-        .querySelector('iframe#chatframe, ytd-live-chat-frame iframe')
-        ?.contentWindow
-        ?.postMessage(
+      const chatFrame = document.querySelector(
+        'iframe#chatframe, ytd-live-chat-frame iframe'
+      );
+
+      if (chatFrame?.contentWindow) {
+        let targetOrigin = window.location.origin;
+        try {
+          if (chatFrame.src) {
+            targetOrigin = new URL(chatFrame.src, window.location.href).origin;
+          }
+        } catch (_) {
+          // Fallback to current origin if URL parsing fails.
+        }
+
+        chatFrame.contentWindow.postMessage(
           {
             source: 'livestream-ai-extension',
             type: 'AI_STATE_CHANGED',
             enabled: isEnabled
           },
-          '*'
+          targetOrigin
         );
+      }
     }
   }
+
+  const isTrustedYouTubeOrigin = (origin) =>
+    /^https:\/\/([a-z0-9-]+\.)?youtube\.com$/i.test(String(origin || ''));
 
   try {
     chrome.runtime.onMessage.addListener((req) => {
@@ -616,7 +645,13 @@
   }
 
   window.addEventListener('message', (e) => {
+    const chatFrameWindow = document.querySelector(
+      'iframe#chatframe, ytd-live-chat-frame iframe'
+    )?.contentWindow;
+
     if (
+      isTrustedYouTubeOrigin(e.origin) &&
+      (e.source === window.top || e.source === chatFrameWindow) &&
       e.data?.source === 'livestream-ai-extension' &&
       e.data?.type === 'AI_STATE_CHANGED'
     ) {
@@ -653,21 +688,18 @@
     }
   });
 
-  // Only Live Chat frames read the saved enabled state.
-  // The YouTube Studio top frame must not turn the assistant off.
-  if (
-    window !== window.top ||
-    window.location.pathname.startsWith('/live_chat')
-  ) {
+  function syncSavedEnabledState() {
     sendRuntimeMessage(
       { type: 'GET_ENABLED' },
       (res, error) => {
-        if (!error && res?.enabled) {
-          setAssistantEnabled(true);
+        if (!error && typeof res?.enabled === 'boolean') {
+          setAssistantEnabled(res.enabled);
         }
       }
     );
   }
+
+  syncSavedEnabledState();
 
   function addPlayerButton() {
     playerRaf = null;
@@ -764,6 +796,10 @@
 
       panel.appendChild(item);
       playerContainer.appendChild(panel);
+    } else {
+      panel
+        .querySelector('.livestream-ai-menuitem')
+        ?.setAttribute('aria-checked', String(isEnabled));
     }
 
     button.addEventListener('click', (e) => {
@@ -810,7 +846,10 @@
       }
     );
 
-    window.addEventListener('yt-navigate-finish', schedule);
+    window.addEventListener('yt-navigate-finish', () => {
+      syncSavedEnabledState();
+      schedule();
+    });
 
     addPlayerButton();
   }
