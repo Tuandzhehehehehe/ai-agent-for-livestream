@@ -59,6 +59,60 @@
       "stock_quantity": 16,
       "category": "electronics",
       "attributes": {"ports": 2, "color": "charcoal"}
+    },
+    {
+      "id": "SYN-PROD-007",
+      "name": "Aurora Studio Ringlight",
+      "description": "A 12-inch LED livestream ringlight with tripod stand and phone holder for creators.",
+      "price": 49.9,
+      "stock_quantity": 18,
+      "category": "lighting",
+      "attributes": {"color": "pearl black", "light_modes": 5, "diameter_inch": 12}
+    },
+    {
+      "id": "SYN-PROD-008",
+      "name": "Velvet Matte Lipstick",
+      "description": "Long-lasting moisturizing matte lipstick featured in beauty livestream flash sales.",
+      "price": 16.5,
+      "stock_quantity": 65,
+      "category": "beauty",
+      "attributes": {"color": "ruby rose", "finish": "velvet matte"}
+    },
+    {
+      "id": "SYN-PROD-009",
+      "name": "Breeze Portable Fan",
+      "description": "Rechargeable handheld turbo fan with digital battery display and quiet brushless motor.",
+      "price": 22.0,
+      "stock_quantity": 30,
+      "category": "appliances",
+      "attributes": {"color": "arctic blue", "battery_mah": 4000}
+    },
+    {
+      "id": "SYN-PROD-010",
+      "name": "Zenith Wireless Microphone",
+      "description": "Dual-channel clip-on wireless lavalier microphone with noise cancellation for livestreaming.",
+      "price": 59.0,
+      "stock_quantity": 9,
+      "category": "audio",
+      "attributes": {"color": "obsidian", "range_m": 50}
+    },
+    {
+      "id": "SYN-PROD-011",
+      "name": "Matcha Collagen Powder",
+      "description": "Ceremonial grade Japanese matcha blended with hydrolyzed marine collagen peptides.",
+      "price": 29.99,
+      "stock_quantity": 45,
+      "category": "wellness",
+      "attributes": {"weight_g": 250, "flavor": "uji matcha"}
+    },
+    {
+      "id": "SYN-PROD-012",
+      "name": "Solaris Insulated Bottle",
+      "description": "Double-wall vacuum stainless steel thermal flask keeping drinks cold for 24 hours.",
+      "price": 19.9,
+      "stock_quantity": 28,
+      "category": "drinkware",
+      "attributes": {"color": "sunset coral", "capacity_ml": 750, "material": "stainless steel"}
     }
   ]
 }

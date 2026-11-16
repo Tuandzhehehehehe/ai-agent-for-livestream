@@ -75,6 +75,16 @@ LivestreamPlatform = Literal["tiktok", "youtube", "shopee", "facebook", "custom"
 SessionStatus = Literal["scheduled", "live", "paused", "ended"]
 DraftActionStatus = Literal["pending", "approved", "edited", "dismissed"]
 EvidenceSourceType = Literal["product", "variant", "inventory", "faq", "policy"]
+OrderStatus = Literal[
+    "pending",
+    "confirmed",
+    "packing",
+    "shipped",
+    "delivered",
+    "cancelled",
+    "refund_requested",
+]
+PaymentStatus = Literal["unpaid", "paid", "cod", "refunded"]
 
 WRITE_CAPABLE_ROLES: frozenset[str] = frozenset({"owner", "admin", "operator", "system"})
 
@@ -329,3 +339,34 @@ class AnswerDraftDocument(TenantDocumentModel):
     final_reply_text: str | None = Field(default=None, max_length=5000)
     acted_by_user_id: SafeIdStr | None = None
     acted_at: datetime | None = None
+
+
+class OrderItemSnapshot(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    product_id: SafeIdStr
+    sku_code: SafeIdStr
+    product_name: ShortStr
+    quantity: int = Field(default=1, ge=1)
+    unit_price: float = Field(..., ge=0.0)
+    line_total: float = Field(..., ge=0.0)
+
+
+class OrderDocument(TenantDocumentModel):
+    order_id: SafeIdStr
+    session_id: SafeIdStr | None = None
+    customer_id: SafeIdStr | None = None
+    customer_handle: ShortStr
+    customer_name: ShortStr
+    platform: LivestreamPlatform = "youtube"
+    status: OrderStatus = "confirmed"
+    payment_status: PaymentStatus = "paid"
+    items: list[OrderItemSnapshot] = Field(default_factory=list)
+    subtotal: float = Field(default=0.0, ge=0.0)
+    shipping_fee: float = Field(default=0.0, ge=0.0)
+    discount_amount: float = Field(default=0.0, ge=0.0)
+    total_amount: float = Field(default=0.0, ge=0.0)
+    currency: CurrencyStr = "USD"
+    shipping_address: str = Field(default="", max_length=500)
+    tracking_code: str | None = Field(default=None, max_length=128)
+    notes: str = Field(default="", max_length=1000)

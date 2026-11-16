@@ -9,24 +9,30 @@ export default function LivestreamDashboardPage() {
   const [architecture, setArchitecture] = useState(null);
   const [summary, setSummary] = useState(null);
   const [comments, setComments] = useState([]);
-  const [agentInput, setAgentInput] = useState('What is the price and stock of the Aurora Ring Light?');
+  const [products, setProducts] = useState([]);
+  const [orders, setOrders] = useState([]);
+  const [agentInput, setAgentInput] = useState('What is the price and stock of the Aurora Studio Ringlight?');
   const [agentResult, setAgentResult] = useState(null);
-  const [ragQuery, setRagQuery] = useState('shipping policy delivery days');
+  const [ragQuery, setRagQuery] = useState('Aurora Studio Ringlight wireless microphone');
   const [ragHits, setRagHits] = useState([]);
   const [loading, setLoading] = useState(false);
 
   const fetchOverview = async () => {
     try {
-      const [hRes, aRes, sRes, cRes] = await Promise.all([
+      const [hRes, aRes, sRes, cRes, pRes, oRes] = await Promise.all([
         fetch(`${API_BASE}/health`),
         fetch(`${API_BASE}/api/agent/architecture`),
         fetch(`${API_BASE}/api/plugin/summary`),
         fetch(`${API_BASE}/api/plugin/comments?limit=25`),
+        fetch(`${API_BASE}/api/store/products`),
+        fetch(`${API_BASE}/api/store/orders`),
       ]);
       if (hRes.ok) setHealth(await hRes.json());
       if (aRes.ok) setArchitecture(await aRes.json());
       if (sRes.ok) setSummary(await sRes.json());
       if (cRes.ok) setComments(await cRes.json());
+      if (pRes.ok) setProducts((await pRes.json()).items || []);
+      if (oRes.ok) setOrders((await oRes.json()).items || []);
     } catch (_) {
       // Backend offline or unreachable
     }
@@ -192,6 +198,46 @@ export default function LivestreamDashboardPage() {
           ))}
         </div>
       </section>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, marginBottom: 24 }}>
+        <section style={{ background: '#1e293b', padding: 20, borderRadius: 12, border: '1px solid #334155' }}>
+          <h2 style={{ marginTop: 0, fontSize: 18, color: '#ddd6fe' }}>Catalog Products & Inventory ({products.length})</h2>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 280, overflowY: 'auto' }}>
+            {products.map((p) => (
+              <div key={p.product_id} style={{ padding: 10, borderRadius: 8, background: '#0f172a', border: '1px solid #334155', display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
+                <div>
+                  <strong>{p.name}</strong>
+                  <div style={{ fontSize: 11, color: '#94a3b8' }}>{p.product_id} • {p.category}</div>
+                </div>
+                <div style={{ textAlign: 'right' }}>
+                  <div style={{ color: '#a78bfa', fontWeight: 700 }}>${Number(p.price).toFixed(2)}</div>
+                  <div style={{ fontSize: 11, color: p.stock_quantity > 0 ? '#34d399' : '#f87171' }}>Stock: {p.stock_quantity}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        <section style={{ background: '#1e293b', padding: 20, borderRadius: 12, border: '1px solid #334155' }}>
+          <h2 style={{ marginTop: 0, fontSize: 18, color: '#ddd6fe' }}>Livestream Customer Orders ({orders.length})</h2>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 280, overflowY: 'auto' }}>
+            {orders.map((o) => (
+              <div key={o.order_id} style={{ padding: 10, borderRadius: 8, background: '#0f172a', border: '1px solid #334155', fontSize: 13 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <strong style={{ color: '#93c5fd' }}>{o.order_id} • {o.customer_name} ({o.customer_handle})</strong>
+                  <span style={{ color: '#fcd34d', fontSize: 12 }}>{o.status} / {o.payment_status}</span>
+                </div>
+                <div style={{ fontSize: 12, color: '#cbd5e1', marginTop: 4 }}>
+                  {(o.items || []).map((it) => `${it.product_name} x${it.quantity}`).join(', ')}
+                </div>
+                <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 3 }}>
+                  Total: ${Number(o.total_amount).toFixed(2)} • {o.shipping_address}
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+      </div>
 
       <section style={{ background: '#1e293b', padding: 20, borderRadius: 12, border: '1px solid #334155' }}>
         <h2 style={{ marginTop: 0, fontSize: 18, color: '#ddd6fe' }}>Real-Time Livestream Comments Feed</h2>

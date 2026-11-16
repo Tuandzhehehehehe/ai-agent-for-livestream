@@ -19,6 +19,7 @@ from backend.repositories import (
     LivestreamCommentRepository,
     LivestreamSessionRepository,
     MembershipRepository,
+    OrderRepository,
     ProductRepository,
     SalesPolicyRepository,
     StoreRepository,
@@ -57,6 +58,7 @@ class StoreDatabaseFacade:
         self.sessions = LivestreamSessionRepository(db)
         self.comments = LivestreamCommentRepository(db)
         self.answer_drafts = AnswerDraftRepository(db)
+        self.orders = OrderRepository(db)
 
         self.cache: TenantOperationalCache | None = (
             TenantOperationalCache(redis_manager.client)

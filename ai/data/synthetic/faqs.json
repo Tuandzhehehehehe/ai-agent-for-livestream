@@ -61,6 +61,34 @@
       "answer": "The warranty example is inactive in this synthetic dataset and should not be treated as current guidance.",
       "category": "warranty",
       "product_ids": []
+    },
+    {
+      "id": "SYN-FAQ-009",
+      "question": "How many light modes does the Aurora Studio Ringlight have?",
+      "answer": "The Aurora Studio Ringlight features 5 adjustable light modes and a 12-inch LED ring.",
+      "category": "product_details",
+      "product_ids": ["SYN-PROD-007"]
+    },
+    {
+      "id": "SYN-FAQ-010",
+      "question": "What shade is the Velvet Matte Lipstick?",
+      "answer": "The Velvet Matte Lipstick in the demo catalog comes in the ruby rose shade.",
+      "category": "product_details",
+      "product_ids": ["SYN-PROD-008"]
+    },
+    {
+      "id": "SYN-FAQ-011",
+      "question": "Does the Zenith Wireless Microphone support noise cancellation?",
+      "answer": "Yes, the Zenith Wireless Microphone includes active noise cancellation and a 50-meter wireless range.",
+      "category": "product_details",
+      "product_ids": ["SYN-PROD-010"]
+    },
+    {
+      "id": "SYN-FAQ-012",
+      "question": "What is the capacity of the Solaris Insulated Bottle?",
+      "answer": "The Solaris Insulated Bottle has a 750 ml capacity with double-wall stainless steel insulation.",
+      "category": "product_details",
+      "product_ids": ["SYN-PROD-012"]
     }
   ]
 }

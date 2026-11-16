@@ -1,0 +1,224 @@
+{
+  "metadata": {
+    "record_type": "orders",
+    "data_origin": "synthetic",
+    "dataset_label": "SYNTHETIC DEMO DATA",
+    "notice": "Fictional livestream customer orders for testing and demonstration only."
+  },
+  "records": [
+    {
+      "order_id": "ORD-2026-001",
+      "store_id": "default-store",
+      "session_id": "youtube-live",
+      "customer_id": "CUST-001",
+      "customer_handle": "@minh_anh_99",
+      "customer_name": "Nguyen Minh Anh",
+      "platform": "youtube",
+      "status": "shipped",
+      "payment_status": "paid",
+      "items": [
+        {
+          "product_id": "SYN-PROD-007",
+          "sku_code": "SKU-PROD-007",
+          "product_name": "Aurora Studio Ringlight",
+          "quantity": 1,
+          "unit_price": 49.9,
+          "line_total": 49.9
+        },
+        {
+          "product_id": "SYN-PROD-010",
+          "sku_code": "SKU-PROD-010",
+          "product_name": "Zenith Wireless Microphone",
+          "quantity": 1,
+          "unit_price": 59.0,
+          "line_total": 59.0
+        }
+      ],
+      "subtotal": 108.9,
+      "shipping_fee": 0.0,
+      "discount_amount": 5.0,
+      "total_amount": 103.9,
+      "currency": "USD",
+      "shipping_address": "123 Nguyen Hue, District 1, Ho Chi Minh City",
+      "tracking_code": "VNPOST-8849201",
+      "notes": "Creator bundle ordered during YouTube Live opening flash sale."
+    },
+    {
+      "order_id": "ORD-2026-002",
+      "store_id": "default-store",
+      "session_id": "youtube-live",
+      "customer_id": "CUST-002",
+      "customer_handle": "@hoang_nam_live",
+      "customer_name": "Tran Hoang Nam",
+      "platform": "youtube",
+      "status": "confirmed",
+      "payment_status": "cod",
+      "items": [
+        {
+          "product_id": "SYN-PROD-001",
+          "sku_code": "SKU-PROD-001",
+          "product_name": "LumaNest Desk Lamp",
+          "quantity": 2,
+          "unit_price": 24.5,
+          "line_total": 49.0
+        },
+        {
+          "product_id": "SYN-PROD-006",
+          "sku_code": "SKU-PROD-006",
+          "product_name": "Morrow USB Desk Charger",
+          "quantity": 1,
+          "unit_price": 12.99,
+          "line_total": 12.99
+        }
+      ],
+      "subtotal": 61.99,
+      "shipping_fee": 2.5,
+      "discount_amount": 0.0,
+      "total_amount": 64.49,
+      "currency": "USD",
+      "shipping_address": "45 Cau Giay, Hanoi",
+      "tracking_code": null,
+      "notes": "Customer requested evening delivery."
+    },
+    {
+      "order_id": "ORD-2026-003",
+      "store_id": "default-store",
+      "session_id": "youtube-live",
+      "customer_id": "CUST-003",
+      "customer_handle": "@thao_vy_beauty",
+      "customer_name": "Le Thao Vy",
+      "platform": "youtube",
+      "status": "delivered",
+      "payment_status": "paid",
+      "items": [
+        {
+          "product_id": "SYN-PROD-008",
+          "sku_code": "SKU-PROD-008",
+          "product_name": "Velvet Matte Lipstick",
+          "quantity": 3,
+          "unit_price": 16.5,
+          "line_total": 49.5
+        },
+        {
+          "product_id": "SYN-PROD-011",
+          "sku_code": "SKU-PROD-011",
+          "product_name": "Matcha Collagen Powder",
+          "quantity": 1,
+          "unit_price": 29.99,
+          "line_total": 29.99
+        }
+      ],
+      "subtotal": 79.49,
+      "shipping_fee": 0.0,
+      "discount_amount": 4.49,
+      "total_amount": 75.0,
+      "currency": "USD",
+      "shipping_address": "78 Bach Dang, Hai Chau, Da Nang",
+      "tracking_code": "GHN-5521904",
+      "notes": "VIP member order."
+    },
+    {
+      "order_id": "ORD-2026-004",
+      "store_id": "default-store",
+      "session_id": "youtube-live",
+      "customer_id": "CUST-004",
+      "customer_handle": "@tuan_kiet_88",
+      "customer_name": "Pham Tuan Kiet",
+      "platform": "youtube",
+      "status": "packing",
+      "payment_status": "paid",
+      "items": [
+        {
+          "product_id": "SYN-PROD-003",
+          "sku_code": "SKU-PROD-003",
+          "product_name": "Kettle Fern Mini Kettle",
+          "quantity": 1,
+          "unit_price": 39.99,
+          "line_total": 39.99
+        },
+        {
+          "product_id": "SYN-PROD-002",
+          "sku_code": "SKU-PROD-002",
+          "product_name": "Pebblebrook Ceramic Mug",
+          "quantity": 2,
+          "unit_price": 14.0,
+          "line_total": 28.0
+        }
+      ],
+      "subtotal": 67.99,
+      "shipping_fee": 2.0,
+      "discount_amount": 0.0,
+      "total_amount": 69.99,
+      "currency": "USD",
+      "shipping_address": "19 Le Loi, Ninh Kieu, Can Tho",
+      "tracking_code": "GHTK-3391022",
+      "notes": "Fragile ceramic items - bubble wrap required."
+    },
+    {
+      "order_id": "ORD-2026-005",
+      "store_id": "default-store",
+      "session_id": "youtube-live",
+      "customer_id": "CUST-005",
+      "customer_handle": "@lan_phuong_shop",
+      "customer_name": "Hoang Lan Phuong",
+      "platform": "youtube",
+      "status": "pending",
+      "payment_status": "unpaid",
+      "items": [
+        {
+          "product_id": "SYN-PROD-009",
+          "sku_code": "SKU-PROD-009",
+          "product_name": "Breeze Portable Fan",
+          "quantity": 2,
+          "unit_price": 22.0,
+          "line_total": 44.0
+        },
+        {
+          "product_id": "SYN-PROD-012",
+          "sku_code": "SKU-PROD-012",
+          "product_name": "Solaris Insulated Bottle",
+          "quantity": 2,
+          "unit_price": 19.9,
+          "line_total": 39.8
+        }
+      ],
+      "subtotal": 83.8,
+      "shipping_fee": 0.0,
+      "discount_amount": 3.8,
+      "total_amount": 80.0,
+      "currency": "USD",
+      "shipping_address": "210 Tran Phu, Nha Trang",
+      "tracking_code": null,
+      "notes": "Awaiting bank transfer confirmation from livestream chat."
+    },
+    {
+      "order_id": "ORD-2026-006",
+      "store_id": "default-store",
+      "session_id": "youtube-live",
+      "customer_id": "CUST-006",
+      "customer_handle": "@alex_nguyen",
+      "customer_name": "Alex Nguyen",
+      "platform": "youtube",
+      "status": "refund_requested",
+      "payment_status": "paid",
+      "items": [
+        {
+          "product_id": "SYN-PROD-005",
+          "sku_code": "SKU-PROD-005",
+          "product_name": "Northstar Knit Scarf",
+          "quantity": 1,
+          "unit_price": 18.0,
+          "line_total": 18.0
+        }
+      ],
+      "subtotal": 18.0,
+      "shipping_fee": 2.0,
+      "discount_amount": 0.0,
+      "total_amount": 20.0,
+      "currency": "USD",
+      "shipping_address": "56 Hai Ba Trung, District 3, Ho Chi Minh City",
+      "tracking_code": "VNPOST-7712098",
+      "notes": "Customer requested color exchange or refund; escalated to human operator."
+    }
+  ]
+}

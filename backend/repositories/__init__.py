@@ -13,6 +13,7 @@ from backend.repositories.livestream import (
     LivestreamCommentRepository,
     LivestreamRepository,
     LivestreamSessionRepository,
+    OrderRepository,
 )
 from backend.repositories.tenant import (
     CustomerRepository,
@@ -33,6 +34,7 @@ __all__ = [
     "LivestreamRepository",
     "LivestreamSessionRepository",
     "MembershipRepository",
+    "OrderRepository",
     "ProductRepository",
     "SalesPolicyRepository",
     "StoreRepository",

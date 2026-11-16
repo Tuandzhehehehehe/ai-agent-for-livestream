@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
+import json
+from pathlib import Path
 from typing import Any
 
 from ai.customer_qa.schemas import Intent
@@ -233,6 +235,52 @@ def get_return_policy(*, dataset: SyntheticDataset | None = None) -> ToolResult:
         return ToolResult(name="get_return_policy", ok=True, data={"items": items, "source_refs": items})
     except (TypeError, ValueError) as exc:
         return ToolResult(name="get_return_policy", ok=False, data={}, error=str(exc))
+
+
+def get_order_status(
+    *,
+    order_id: str | None = None,
+    customer_handle: str | None = None,
+    query: str | None = None,
+) -> ToolResult:
+    """Look up synthetic livestream orders by order_id, customer_handle, or query text."""
+    try:
+        orders_path = Path(__file__).resolve().parent / "data" / "synthetic" / "orders.json"
+        if not orders_path.is_file():
+            return ToolResult(name="get_order_status", ok=True, data={"count": 0, "items": []})
+        payload = json.loads(orders_path.read_text(encoding="utf-8"))
+        records = payload.get("records", []) if isinstance(payload, dict) else []
+        needle_id = (order_id or "").strip().casefold()
+        needle_handle = (customer_handle or "").strip().casefold()
+        needle_query = (query or "").strip().casefold()
+
+        matched = []
+        for rec in records:
+            if not isinstance(rec, dict):
+                continue
+            oid = str(rec.get("order_id", "")).casefold()
+            handle = str(rec.get("customer_handle", "")).casefold()
+            cname = str(rec.get("customer_name", "")).casefold()
+            if needle_id and needle_id == oid:
+                matched.append(rec)
+            elif needle_handle and (needle_handle == handle or needle_handle.lstrip("@") == handle.lstrip("@")):
+                matched.append(rec)
+            elif needle_query and (
+                (oid and oid in needle_query)
+                or (handle and handle in needle_query)
+                or (cname and cname in needle_query)
+            ):
+                matched.append(rec)
+            elif not needle_id and not needle_handle and not needle_query:
+                matched.append(rec)
+
+        return ToolResult(
+            name="get_order_status",
+            ok=True,
+            data={"count": len(matched), "items": matched, "synthetic_data": True},
+        )
+    except (OSError, ValueError, TypeError) as exc:
+        return ToolResult(name="get_order_status", ok=False, data={}, error=str(exc))
 
 
 def aggregate_frequent_questions_tool(
@@ -459,6 +507,28 @@ AGENT_TOOL_REGISTRY: dict[str, ToolSpec] = {
             },
         },
     ),
+    "get_order_status": ToolSpec(
+        name="get_order_status",
+        description="Look up synthetic customer orders by order ID (e.g. ORD-2026-001) or customer handle.",
+        handler=get_order_status,
+        parameters={
+            "type": "object",
+            "properties": {
+                "order_id": {
+                    "type": "string",
+                    "description": "Order ID such as ORD-2026-001.",
+                },
+                "customer_handle": {
+                    "type": "string",
+                    "description": "Customer handle such as @minh_anh_99.",
+                },
+                "query": {
+                    "type": "string",
+                    "description": "Free-text query mentioning order ID or customer name.",
+                },
+            },
+        },
+    ),
 }
 
 
@@ -525,6 +595,8 @@ def execute_agent_tool(
         return handler(comments or (), classifications=classifications)
     if tool_name == "summarize_livestream_session":
         return handler(comments, events, dataset=dataset, minimum_question_frequency=minimum_question_frequency)
+    if tool_name == "get_order_status":
+        return handler(query=query)
     raise ValueError(f"No argument mapping defined for tool {tool_name!r}")
 
 

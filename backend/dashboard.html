@@ -39,23 +39,29 @@
       const [arch, setArch] = useState(null);
       const [summary, setSummary] = useState(null);
       const [comments, setComments] = useState([]);
-      const [question, setQuestion] = useState('What is the price and stock of the Aurora Ring Light?');
+      const [products, setProducts] = useState([]);
+      const [orders, setOrders] = useState([]);
+      const [question, setQuestion] = useState('What is the price and stock of the Aurora Studio Ringlight?');
       const [agentOutput, setAgentOutput] = useState(null);
-      const [ragQuery, setRagQuery] = useState('shipping policy delivery days');
+      const [ragQuery, setRagQuery] = useState('Aurora Studio Ringlight wireless microphone');
       const [ragHits, setRagHits] = useState([]);
 
       const refresh = async () => {
         try {
-          const [h, a, s, c] = await Promise.all([
+          const [h, a, s, c, p, o] = await Promise.all([
             fetch('/health').then(r => r.json()),
             fetch('/api/agent/architecture').then(r => r.json()),
             fetch('/api/plugin/summary').then(r => r.json()),
             fetch('/api/plugin/comments?limit=20').then(r => r.json()),
+            fetch('/api/store/products').then(r => r.json()),
+            fetch('/api/store/orders').then(r => r.json()),
           ]);
           setHealth(h);
           setArch(a);
           setSummary(s);
           setComments(c);
+          setProducts(p.items || []);
+          setOrders(o.items || []);
         } catch (_) {}
       };
 
@@ -151,6 +157,44 @@
               e('div', { key: ag.id, style: { padding: 12, background: '#0f172a', borderRadius: 8, border: '1px solid #475569' } },
                 e('div', { style: { fontWeight: 600, color: '#c4b5fd', fontSize: 13 } }, ag.name),
                 e('div', { style: { marginTop: 6, fontSize: 12, color: '#94a3b8' } }, ag.role)
+              )
+            )
+          )
+        ),
+        e('div', { className: 'grid-2' },
+          e('div', { className: 'card' },
+            e('h3', { style: { marginTop: 0, color: '#ddd6fe' } }, `Catalog Products & Inventory (${products.length})`),
+            e('div', { style: { maxHeight: 280, overflowY: 'auto' } },
+              products.map(p =>
+                e('div', { key: p.product_id, style: { padding: '8px 10px', background: '#0f172a', borderRadius: 8, marginTop: 6, fontSize: 13, display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
+                  e('div', null,
+                    e('strong', { style: { color: '#f8fafc' } }, p.name),
+                    e('div', { style: { fontSize: 11, color: '#94a3b8' } }, `${p.product_id} • ${p.category}`)
+                  ),
+                  e('div', { style: { textAlign: 'right' } },
+                    e('div', { style: { fontWeight: 700, color: '#a78bfa' } }, `$${Number(p.price).toFixed(2)}`),
+                    e('span', { className: `badge ${p.stock_quantity > 0 ? 'hot' : 'review'}` }, `Stock: ${p.stock_quantity}`)
+                  )
+                )
+              )
+            )
+          ),
+          e('div', { className: 'card' },
+            e('h3', { style: { marginTop: 0, color: '#ddd6fe' } }, `Livestream Customer Orders (${orders.length})`),
+            e('div', { style: { maxHeight: 280, overflowY: 'auto' } },
+              orders.map(o =>
+                e('div', { key: o.order_id, style: { padding: '8px 10px', background: '#0f172a', borderRadius: 8, marginTop: 6, fontSize: 13 } },
+                  e('div', { style: { display: 'flex', justifyContent: 'space-between' } },
+                    e('strong', { style: { color: '#93c5fd' } }, `${o.order_id} • ${o.customer_name} (${o.customer_handle})`),
+                    e('span', { className: `badge ${o.status === 'delivered' || o.status === 'shipped' ? 'hot' : o.status === 'refund_requested' ? 'review' : 'warm'}` }, `${o.status} / ${o.payment_status}`)
+                  ),
+                  e('div', { style: { fontSize: 12, color: '#cbd5e1', marginTop: 4 } },
+                    (o.items || []).map(it => `${it.product_name} x${it.quantity}`).join(', ')
+                  ),
+                  e('div', { style: { fontSize: 11, color: '#94a3b8', marginTop: 3 } },
+                    `Total: $${Number(o.total_amount).toFixed(2)} • ${o.shipping_address}`
+                  )
+                )
               )
             )
           )

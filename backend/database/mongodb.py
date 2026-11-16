@@ -43,6 +43,7 @@ COLL_CUSTOMERS = "customers"
 COLL_LIVESTREAM_SESSIONS = "livestream_sessions"
 COLL_LIVESTREAM_COMMENTS = "livestream_comments"
 COLL_ANSWER_DRAFTS = "answer_drafts"
+COLL_ORDERS = "orders"
 
 ALL_COLLECTIONS: tuple[str, ...] = (
     COLL_USERS,
@@ -57,6 +58,7 @@ ALL_COLLECTIONS: tuple[str, ...] = (
     COLL_LIVESTREAM_SESSIONS,
     COLL_LIVESTREAM_COMMENTS,
     COLL_ANSWER_DRAFTS,
+    COLL_ORDERS,
 )
 
 
@@ -375,6 +377,21 @@ def get_index_specifications() -> dict[str, list[IndexModel]]:
                 name="ix_drafts_store_session_action_created",
             ),
         ],
+        COLL_ORDERS: [
+            IndexModel(
+                [("store_id", ASCENDING), ("order_id", ASCENDING)],
+                unique=True,
+                name="uq_orders_store_order_id",
+            ),
+            IndexModel(
+                [("store_id", ASCENDING), ("status", ASCENDING), ("created_at", DESCENDING)],
+                name="ix_orders_store_status_created",
+            ),
+            IndexModel(
+                [("store_id", ASCENDING), ("customer_handle", ASCENDING)],
+                name="ix_orders_store_customer_handle",
+            ),
+        ],
     }
 
 
@@ -562,6 +579,19 @@ def get_collection_validators() -> dict[str, dict[str, Any]]:
                     "draft_id": _non_empty_string_schema(),
                     "comment_id": _non_empty_string_schema(),
                     "seller_action": {"enum": ["pending", "approved", "edited", "dismissed"]},
+                },
+            }
+        },
+        COLL_ORDERS: {
+            "$jsonSchema": {
+                "bsonType": "object",
+                "required": ["store_id", "order_id", "customer_handle", "customer_name", "status", "payment_status", "total_amount"],
+                "properties": {
+                    "store_id": _non_empty_string_schema(),
+                    "order_id": _non_empty_string_schema(),
+                    "customer_handle": _non_empty_string_schema(),
+                    "customer_name": _non_empty_string_schema(),
+                    "total_amount": {"bsonType": ["double", "int", "long"], "minimum": 0},
                 },
             }
         },

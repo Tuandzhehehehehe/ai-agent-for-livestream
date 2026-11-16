@@ -12,6 +12,8 @@ from backend.database.models import (
     DraftActionStatus,
     LivestreamCommentDocument,
     LivestreamSessionDocument,
+    OrderDocument,
+    OrderStatus,
     SessionStatus,
     TenantContext,
     utc_now,
@@ -21,6 +23,7 @@ from backend.database.mongodb import (
     COLL_CUSTOMERS,
     COLL_LIVESTREAM_COMMENTS,
     COLL_LIVESTREAM_SESSIONS,
+    COLL_ORDERS,
     COLL_PRODUCTS,
     DatabaseOperationError,
     DuplicateDocumentError,
@@ -318,3 +321,47 @@ class AnswerRepository(BaseTenantRepository[AnswerDraftDocument]):
 
 
 AnswerDraftRepository = AnswerRepository
+
+
+class OrderRepository(BaseTenantRepository[OrderDocument]):
+    collection_name = COLL_ORDERS
+    model_cls = OrderDocument
+    id_field = "order_id"
+
+    async def upsert_order(self, ctx: TenantContext, order: OrderDocument) -> OrderDocument:
+        self._assert_document_tenant(ctx, order)
+        existing = await self.get_by_id(ctx, order.order_id)
+        if existing is None:
+            return await self._insert(order)
+        updated = await self.update_by_id(
+            ctx,
+            order.order_id,
+            {
+                "status": order.status,
+                "payment_status": order.payment_status,
+                "items": [item.model_dump(mode="python") for item in order.items],
+                "subtotal": order.subtotal,
+                "shipping_fee": order.shipping_fee,
+                "discount_amount": order.discount_amount,
+                "total_amount": order.total_amount,
+                "shipping_address": order.shipping_address,
+                "tracking_code": order.tracking_code,
+                "notes": order.notes,
+            },
+        )
+        return updated or existing
+
+    async def list_orders(
+        self,
+        ctx: TenantContext,
+        *,
+        status: OrderStatus | None = None,
+        customer_handle: str | None = None,
+        limit: int = 100,
+    ) -> list[OrderDocument]:
+        extra: dict[str, Any] = {}
+        if status is not None:
+            extra["status"] = status
+        if customer_handle:
+            extra["customer_handle"] = customer_handle.strip()
+        return await self.list_in_tenant(ctx, extra, sort=[("order_id", 1)], limit=limit)

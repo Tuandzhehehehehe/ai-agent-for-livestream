@@ -21,6 +21,7 @@ from ai.agent_tools import execute_agent_tool, get_tool_definitions
 from ai.customer_qa import CustomerQuestionRequest, draft_customer_answer
 from ai.customer_qa.safety import MAX_CUSTOMER_MESSAGE_LENGTH
 from ai.customer_qa.schemas import AnswerStatus, Intent, SourceType
+from ai.data import load_synthetic_data
 from ai.multi_agent import MultiAgentOrchestrator, compute_lead_score
 from ai.operations import CommentClassification, SimulatedComment, classify_comment
 from ai.vector_rag import get_vector_rag_store
@@ -30,6 +31,7 @@ from backend.chat_safety import (
     configured_rate_limiter,
 )
 from backend.database import *
+from backend.database.seed import load_demo_orders, seed_demo_store_data
 from backend.local_model import LocalIntentModel, MODEL_NAME, get_local_intent_model
 from backend.ollama_provider import get_ollama_provider
 
@@ -313,17 +315,7 @@ def create_app(
                     mongo_manager,
                     redis_manager if redis_connected else None,
                 )
-                if await facade.sessions.get_by_id(tenant_ctx, session_id) is None:
-                    await facade.sessions.create_session(
-                        tenant_ctx,
-                        LivestreamSessionDocument(
-                            store_id=store_id,
-                            session_id=session_id,
-                            title=session_id,
-                            platform="youtube",
-                            status="live",
-                        ),
-                    )
+                await seed_demo_store_data(facade, tenant_ctx, session_id=session_id)
                 app.state.db = facade
             except DatabaseError as exc:
                 logger.warning("Database session initialization failed, using in-memory mode: %s", exc)
@@ -568,6 +560,109 @@ def create_app(
                 }
                 for hit in hits
             ],
+        }
+
+    @app.get("/api/store/products")
+    async def list_store_products() -> dict[str, Any]:
+        facade: StoreDatabaseFacade | None = getattr(app.state, "db", None)
+        if facade is not None:
+            try:
+                products = await facade.products.list_active_products(tenant_ctx)
+                inventories = await facade.products.list_inventory_for_store(tenant_ctx)
+                inv_by_prod = {inv.product_id: inv for inv in inventories}
+                items = [
+                    {
+                        "product_id": p.product_id,
+                        "sku_code": p.sku_code,
+                        "name": p.name,
+                        "category": p.category,
+                        "price": p.price,
+                        "currency": p.currency,
+                        "description": p.short_description,
+                        "stock_quantity": inv_by_prod[p.product_id].quantity_available
+                        if p.product_id in inv_by_prod
+                        else 0,
+                        "in_stock": inv_by_prod[p.product_id].in_stock
+                        if p.product_id in inv_by_prod
+                        else False,
+                        "attributes": p.attributes,
+                        "storage_mode": "mongodb",
+                    }
+                    for p in products
+                ]
+                return {"count": len(items), "storage_mode": "mongodb", "items": items}
+            except DatabaseError:
+                pass
+
+        dataset = load_synthetic_data()
+        items = [
+            {
+                "product_id": p.id,
+                "sku_code": f"SKU-{p.id.replace('SYN-', '')}",
+                "name": p.name,
+                "category": p.category,
+                "price": p.price,
+                "currency": "USD",
+                "description": p.description,
+                "stock_quantity": p.stock_quantity,
+                "in_stock": p.stock_quantity > 0,
+                "attributes": dict(p.attributes),
+                "storage_mode": "synthetic_memory",
+            }
+            for p in dataset.products
+        ]
+        return {"count": len(items), "storage_mode": "synthetic_memory", "items": items}
+
+    @app.get("/api/store/orders")
+    async def list_store_orders(
+        status: OrderStatus | None = None,
+        customer_handle: str | None = None,
+    ) -> dict[str, Any]:
+        facade: StoreDatabaseFacade | None = getattr(app.state, "db", None)
+        if facade is not None:
+            try:
+                orders = await facade.orders.list_orders(
+                    tenant_ctx, status=status, customer_handle=customer_handle
+                )
+                return {
+                    "count": len(orders),
+                    "storage_mode": "mongodb",
+                    "items": [o.model_dump(mode="json") for o in orders],
+                }
+            except DatabaseError:
+                pass
+
+        demo_orders = load_demo_orders(store_id=store_id, session_id=session_id)
+        if status is not None:
+            demo_orders = [o for o in demo_orders if o.status == status]
+        if customer_handle:
+            handle_norm = customer_handle.strip().casefold()
+            demo_orders = [
+                o for o in demo_orders if o.customer_handle.casefold() == handle_norm
+            ]
+        return {
+            "count": len(demo_orders),
+            "storage_mode": "synthetic_memory",
+            "items": [o.model_dump(mode="json") for o in demo_orders],
+        }
+
+    @app.post("/api/store/seed")
+    async def trigger_seed() -> dict[str, Any]:
+        facade: StoreDatabaseFacade | None = getattr(app.state, "db", None)
+        if facade is not None:
+            counts = await seed_demo_store_data(facade, tenant_ctx, session_id=session_id)
+            return {"seeded": True, "storage_mode": "mongodb", "counts": counts}
+        dataset = load_synthetic_data()
+        orders = load_demo_orders(store_id=store_id, session_id=session_id)
+        return {
+            "seeded": True,
+            "storage_mode": "synthetic_memory",
+            "counts": {
+                "products": len(dataset.products),
+                "faqs": len(dataset.faqs),
+                "policies": len(dataset.policies),
+                "orders": len(orders),
+            },
         }
 
     return app
