@@ -212,8 +212,13 @@
                 )
               ),
               e('div', { style: { marginTop: 6 } }, c.text),
-              c.answer_draft?.answer && e('div', { style: { marginTop: 8, padding: 8, borderRadius: 6, background: '#1e1b4b', color: '#ddd6fe', fontSize: 13 } },
-                e('strong', null, 'AI Draft: '), c.answer_draft.answer
+              (c.thread_messages || []).map((m, idx) =>
+                e('div', { key: idx, style: { marginTop: 8, padding: 8, borderRadius: 6, background: '#1e1b4b', color: '#ddd6fe', fontSize: 13 } },
+                  e('strong', { style: { color: '#6ee7b7' } }, `${m.sender}: `), m.text
+                )
+              ),
+              (!c.thread_messages || !c.thread_messages.length) && c.answer_draft?.answer && e('div', { style: { marginTop: 8, padding: 8, borderRadius: 6, background: '#334155', color: '#fcd34d', fontSize: 13 } },
+                e('strong', null, 'Pending Operator Review: '), c.answer_draft.answer
               )
             )
           )

@@ -217,7 +217,7 @@
       );
     } else if (record.answer_draft?.status === 'answered') {
       badges.appendChild(
-        el('span', 'livestream-ai-popover-badge is-answered', 'Draft Ready')
+        el('span', 'livestream-ai-popover-badge is-answered', 'Auto Replied')
       );
     }
 
@@ -254,18 +254,33 @@
       threadList.appendChild(el('div', 'livestream-ai-popover-reason', reason));
     }
 
-    const replies = Array.isArray(record.thread_messages)
+    const draftText = record.answer_draft?.answer || '';
+    const canAutoReply =
+      record.answer_draft?.status === 'answered' &&
+      !record.needs_human_review &&
+      !record.answer_draft?.needs_human_review &&
+      Boolean(draftText);
+
+    const replies = Array.isArray(record.thread_messages) && record.thread_messages.length
       ? record.thread_messages
-      : [];
+      : canAutoReply
+        ? [
+            {
+              sender: 'AI Agent',
+              authorRole: 'ai',
+              text: draftText,
+              timestamp: Date.now()
+            }
+          ]
+        : [];
     replies.forEach((m) => {
       threadList.appendChild(createThreadMessage(m.sender, m.text, true));
     });
 
-    const draftText = record.answer_draft?.answer || '';
     const replyInput = el('input', 'livestream-ai-thread-input');
     replyInput.type = 'text';
     replyInput.placeholder = `Message ${record.sender}...`;
-    replyInput.value = !replies.length ? draftText : '';
+    replyInput.value = '';
 
     const sendBtn = el('button', 'livestream-ai-thread-send', 'Send');
     sendBtn.type = 'submit';

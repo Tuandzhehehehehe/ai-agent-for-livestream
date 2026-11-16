@@ -394,7 +394,23 @@ def create_app(
             evicted = recent_comments[0]
             if evicted.comment_id != result.comment_id:
                 threads_by_comment.pop(evicted.comment_id, None)
-        result.thread_messages = threads_by_comment.setdefault(result.comment_id, [])
+        thread = threads_by_comment.setdefault(result.comment_id, [])
+        auto_replied = bool(
+            result.answer_draft
+            and result.answer_draft.status == "answered"
+            and not result.needs_human_review
+            and not result.answer_draft.needs_human_review
+            and result.answer_draft.answer
+        )
+        if auto_replied and not any(m.author_role == "ai" for m in thread):
+            thread.append(
+                ThreadMessage(
+                    sender="AI Agent",
+                    author_role="ai",
+                    text=result.answer_draft.answer,
+                )
+            )
+        result.thread_messages = thread
         recent_comments.append(result)
 
         facade: StoreDatabaseFacade | None = getattr(app.state, "db", None)
@@ -426,6 +442,7 @@ def create_app(
                         session_id,
                         high_lead_comments=1 if result.lead_label == "hot" else 0,
                         drafts_generated=1 if result.answer_draft is not None else 0,
+                        drafts_approved=1 if auto_replied else 0,
                     )
                 if (
                     persistence.inserted_into_mongo
@@ -443,6 +460,12 @@ def create_app(
                             confidence=1.0 if result.answer_draft.status == "answered" else 0.0,
                             grounding_passed=not result.answer_draft.needs_human_review,
                             fallback_used=result.answer_draft.status != "answered",
+                            seller_action="approved" if auto_replied else "pending",
+                            final_reply_text=(
+                                result.answer_draft.answer[:5000] if auto_replied else None
+                            ),
+                            acted_by_user_id="ai-agent" if auto_replied else None,
+                            acted_at=utc_now() if auto_replied else None,
                             sources=[
                                 EvidenceSourceSnapshot(
                                     source_type=s.source_type,

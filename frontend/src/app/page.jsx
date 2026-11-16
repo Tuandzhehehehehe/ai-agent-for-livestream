@@ -252,9 +252,14 @@ export default function LivestreamDashboardPage() {
                 </span>
               </div>
               <div style={{ marginTop: 6 }}>{c.text}</div>
-              {c.answer_draft?.answer && (
-                <div style={{ marginTop: 8, padding: 8, borderRadius: 6, background: '#1e1b4b', color: '#ddd6fe', fontSize: 13 }}>
-                  <strong>AI Draft:</strong> {c.answer_draft.answer}
+              {(c.thread_messages || []).map((m, idx) => (
+                <div key={idx} style={{ marginTop: 8, padding: 8, borderRadius: 6, background: '#1e1b4b', color: '#ddd6fe', fontSize: 13 }}>
+                  <strong style={{ color: '#6ee7b7' }}>{m.sender}:</strong> {m.text}
+                </div>
+              ))}
+              {(!c.thread_messages || !c.thread_messages.length) && c.answer_draft?.answer && (
+                <div style={{ marginTop: 8, padding: 8, borderRadius: 6, background: '#334155', color: '#fcd34d', fontSize: 13 }}>
+                  <strong>Pending Operator Review:</strong> {c.answer_draft.answer}
                 </div>
               )}
             </div>
