@@ -125,7 +125,7 @@ class MultiAgentOrchestrator:
         self.dataset = dataset or load_synthetic_data()
         self.intent_model = intent_model or get_local_intent_model()
         self.moderator = moderator or ContentModerator.from_environment()
-        self.vector_store = get_vector_rag_store(self.dataset)
+        self.vector_store = get_vector_rag_store(dataset)
         self._langgraph_app: Any = None
         self._orchestrator_backend: Literal["langgraph", "builtin_stategraph"] = "builtin_stategraph"
         self._try_compile_langgraph()

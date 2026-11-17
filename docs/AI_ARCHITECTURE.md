@@ -73,38 +73,41 @@ when enabled, it receives only the question and retrieved evidence and produces
 a draft. If Ollama is disabled, unavailable, or returns an unusable response,
 the deterministic answer service remains the fallback.
 
-## Retrieval choice
+## Retrieval architecture (Deterministic Baseline + Hybrid Vector RAG)
 
-The bundled corpus currently has 18 records: 6 products, 8 FAQs, and 4 sales
-policies. `ai.customer_qa.retrieval.retrieve_evidence` uses deterministic
-keyword candidates, intent/category filtering, product-name matching, and
-effective-policy filtering, then returns typed source references. A small
-local probe confirmed a shipping paraphrase resolves to
-`SYN-POLICY-SHIPPING-001`, a product-color question resolves to its product
-and FAQ records, and an unrelated sports question returns no evidence.
+The bundled corpus contains 12 products, FAQs, sales policies, and demo
+livestream orders. Retrieval operates in two complementary layers:
 
-A vector database is not justified for this corpus yet. FAISS/Chroma would add
-an embedding model, index lifecycle, and dependency surface without a labeled
-retrieval benchmark showing better recall on this small synthetic dataset.
-Keep the current deterministic retriever as the baseline; reconsider a single
-local vector index when the catalog/FAQ corpus grows materially and a held-out
-retrieval evaluation demonstrates a measurable benefit.
+1. **Deterministic Grounded Retriever (`ai.customer_qa.retrieval.retrieve_evidence`)**:
+   Uses keyword candidates, intent/category filtering, product-name matching,
+   and effective-policy filtering to return typed source references (`product`,
+   `faq`, `policy`). For example, a shipping paraphrase resolves to
+   `SYN-POLICY-SHIPPING-001`, a product-color question resolves to its product
+   and FAQ records, and an unrelated sports question returns no evidence.
+2. **Hybrid Vector RAG (`ai.vector_rag.VectorRAGStore`)**:
+   Indexes products, FAQs, and active sales policies using `FAISS`, `ChromaDB`,
+   or the built-in deterministic cosine-similarity embedding backend, combined
+   with lexical overlap scoring (`POST /api/agent/rag/search` and
+   `ToolCallingRAGAgent`).
 
 `ai.evaluation` runs deterministic golden cases from a separate synthetic
 fixture and reports intent/outcome accuracy, escalation recall, unsupported
 answer rate, source coverage, duplicate handling, and operations traceability.
-It writes machine-readable JSON and a matching Markdown report. Metrics include
-their denominators and do not estimate real-world accuracy.
+`backend.e2e_verification` runs end-to-end and long-session stability checks
+across the HTTP routes, repository persistence, rate limiting, moderation,
+multi-agent pipeline, and extension UI contracts.
 
 ## Dependency direction
 
 Data and schemas are independent of the HTTP backend. Retrieval uses the data
-layer; Q&A and operations use schemas and retrieval. The backend imports these
-Python APIs and exposes the comment/summary routes. The local model depends on
+layer; customer Q&A, multi-agent orchestration, tool calling, and operations use
+schemas and retrieval. `backend.main` imports these Python APIs, wires
+`StoreDatabaseFacade` (MongoDB + Redis) for reading and writing livestream
+comments, answer drafts, session metrics, catalog products/inventory, and
+orders, and falls back to an in-process bounded `deque` (`recent_comments`)
+when MongoDB/Redis are unavailable. The local intent model depends on
 scikit-learn and the synthetic training corpus. Optional local Ollama uses its
-loopback HTTP API and needs no cloud credentials or automatic model download.
-The MongoDB/Redis packages are not wired into `backend.main` yet; current live
-comments and rate limits remain in process memory.
+loopback HTTP API and requires no cloud credentials or automatic model download.
 
 ## Phase boundaries
 
@@ -112,6 +115,14 @@ Phase 0 established package metadata and contracts. Phase 1 implements
 the synthetic data layer; Phase 2 implements deterministic retrieval and
 customer Q&A; Phase 3 adds a bounded deterministic safety/review gate; Phase 4
 adds offline operations analysis; Phase 5 evaluates these modules against
-curated synthetic cases. The local classifier was added separately and is not
-measured by the golden-case report. Prompt-injection detection remains a basic
-pattern baseline.
+curated synthetic cases. Subsequent phases added the local TF-IDF/Logistic
+Regression classifier (`backend.local_model`), Multi-Agent StateGraph
+orchestration (`ai.multi_agent`), Hybrid Vector RAG (`ai.vector_rag`),
+function-calling tools (`ai.agent_tools`), multi-tenant MongoDB/Redis
+repository persistence (`backend.database`, `backend.repositories`,
+`backend.infrastructure`), the Operator Dashboard (`backend/dashboard.html` and
+`frontend/`), the YouTube Live extension chip strip & private draft review
+popover (`extension/`), and automated E2E/long-session verification
+(`backend.e2e_verification`). Prompt-injection detection remains a pattern
+baseline and all AI answers remain drafts (`is_draft=True`) requiring operator
+review before external use.

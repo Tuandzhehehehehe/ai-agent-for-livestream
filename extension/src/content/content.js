@@ -217,7 +217,7 @@
       );
     } else if (record.answer_draft?.status === 'answered') {
       badges.appendChild(
-        el('span', 'livestream-ai-popover-badge is-answered', 'Auto Replied')
+        el('span', 'livestream-ai-popover-badge is-answered', 'Draft Ready')
       );
     }
 
@@ -255,7 +255,7 @@
     }
 
     const draftText = record.answer_draft?.answer || '';
-    const canAutoReply =
+    const hasReadyDraft =
       record.answer_draft?.status === 'answered' &&
       !record.needs_human_review &&
       !record.answer_draft?.needs_human_review &&
@@ -263,10 +263,10 @@
 
     const replies = Array.isArray(record.thread_messages) && record.thread_messages.length
       ? record.thread_messages
-      : canAutoReply
+      : hasReadyDraft
         ? [
             {
-              sender: 'AI Agent',
+              sender: 'AI Draft',
               authorRole: 'ai',
               text: draftText,
               timestamp: Date.now()
@@ -279,10 +279,10 @@
 
     const replyInput = el('input', 'livestream-ai-thread-input');
     replyInput.type = 'text';
-    replyInput.placeholder = `Message ${record.sender}...`;
+    replyInput.placeholder = `Internal draft / operator note for ${record.sender}...`;
     replyInput.value = '';
 
-    const sendBtn = el('button', 'livestream-ai-thread-send', 'Send');
+    const sendBtn = el('button', 'livestream-ai-thread-send', 'Save Note');
     sendBtn.type = 'submit';
 
     const composer = el('form', 'livestream-ai-thread-composer');
@@ -294,7 +294,7 @@
 
       const isAi = Boolean(draftText && text === draftText.trim());
       const payload = {
-        sender: isAi ? 'AI Agent' : 'Moderator',
+        sender: isAi ? 'AI Draft' : 'Moderator',
         authorRole: isAi ? 'ai' : 'moderator',
         text,
         timestamp: Date.now()

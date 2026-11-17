@@ -276,6 +276,7 @@ def create_app(
     local_model: LocalIntentModel | None = None,
     rate_limiter: ViewerRateLimiter | None = None,
     content_moderator: ContentModerator | None = None,
+    db_facade: StoreDatabaseFacade | None = None,
 ) -> FastAPI:
     """Build an app wired to MongoDB/Redis with an in-memory fallback buffer."""
     recent_comments: deque[ClassifiedLiveComment] = deque(maxlen=MAX_STORED_COMMENTS)
@@ -291,8 +292,193 @@ def create_app(
     mongo_manager = MongoDatabaseManager(db_settings.mongo)
     redis_manager = RedisManager(db_settings.redis)
 
+    def _upsert_recent_comment(item: ClassifiedLiveComment) -> None:
+        for idx, existing in enumerate(recent_comments):
+            if existing.comment_id == item.comment_id:
+                recent_comments[idx] = item
+                return
+        if len(recent_comments) == MAX_STORED_COMMENTS:
+            evicted = recent_comments[0]
+            if evicted.comment_id != item.comment_id:
+                threads_by_comment.pop(evicted.comment_id, None)
+        recent_comments.append(item)
+
+    async def _load_comments_from_repository(
+        facade: StoreDatabaseFacade,
+        *,
+        limit: int = MAX_STORED_COMMENTS,
+    ) -> list[ClassifiedLiveComment]:
+        db_comments = await facade.comments.list_recent_for_session(
+            tenant_ctx, session_id, limit=limit
+        )
+        db_drafts = await facade.answer_drafts.list_for_session(
+            tenant_ctx, session_id, limit=min(limit * 2, MAX_STORED_COMMENTS * 2)
+        )
+        draft_by_comment: dict[str, AnswerDraftDocument] = {}
+        for draft_doc in db_drafts:
+            draft_by_comment.setdefault(draft_doc.comment_id, draft_doc)
+
+        memory_by_id = {c.comment_id: c for c in recent_comments}
+        items: list[ClassifiedLiveComment] = []
+
+        for doc in db_comments:
+            mem_item = memory_by_id.get(doc.comment_id)
+            draft_doc = draft_by_comment.get(doc.comment_id)
+            intent_val: Intent = (
+                doc.intent  # type: ignore[assignment]
+                if doc.intent in LOCAL_MODEL_REVIEW_REASONS
+                or doc.intent in ANSWERABLE_INTENTS
+                or doc.intent == "unknown"
+                else (mem_item.intent if mem_item else "unknown")
+            )
+            answer_draft: AnswerDraftResponse | None = None
+            if draft_doc is not None:
+                draft_needs_review = not draft_doc.grounding_passed or draft_doc.fallback_used
+                draft_reason = (
+                    mem_item.answer_draft.reason
+                    if mem_item and mem_item.answer_draft
+                    else (
+                        "Draft requires operator verification before sending."
+                        if draft_needs_review
+                        else None
+                    )
+                )
+                answer_draft = AnswerDraftResponse(
+                    answer=draft_doc.suggested_reply,
+                    intent=intent_val,
+                    sources=[
+                        AnswerSourceResponse(
+                            source_type=(
+                                src.source_type  # type: ignore[arg-type]
+                                if src.source_type in {"product", "faq", "policy"}
+                                else "product"
+                            ),
+                            source_id=src.source_id,
+                            title=src.title,
+                            excerpt=src.snippet,
+                        )
+                        for src in draft_doc.sources
+                    ],
+                    status="needs_review" if draft_needs_review else "answered",
+                    needs_human_review=draft_needs_review,
+                    reason=draft_reason,
+                    is_draft=True,
+                )
+            elif mem_item is not None:
+                answer_draft = mem_item.answer_draft
+
+            needs_review = (
+                True
+                if doc.safety_blocked
+                else (
+                    answer_draft.needs_human_review
+                    if answer_draft is not None
+                    else (
+                        mem_item.needs_human_review
+                        if mem_item is not None
+                        else intent_val in LOCAL_MODEL_REVIEW_REASONS
+                    )
+                )
+            )
+            reason = (
+                "Comment blocked by chat moderation."
+                if doc.safety_blocked
+                else (
+                    mem_item.reason
+                    if mem_item is not None
+                    else (
+                        answer_draft.reason
+                        if answer_draft is not None
+                        else LOCAL_MODEL_REVIEW_REASONS.get(intent_val)
+                    )
+                )
+            )
+
+            thread = threads_by_comment.get(doc.comment_id)
+            if thread is None:
+                reconstructed_thread: list[ThreadMessage] = []
+                ts_ms = int(doc.timestamp.timestamp() * 1000)
+                if (
+                    answer_draft is not None
+                    and answer_draft.status == "answered"
+                    and not needs_review
+                    and answer_draft.answer
+                ):
+                    reconstructed_thread.append(
+                        ThreadMessage(
+                            sender="AI Draft",
+                            author_role="ai",
+                            text=answer_draft.answer,
+                            timestamp=ts_ms,
+                        )
+                    )
+                if (
+                    draft_doc is not None
+                    and draft_doc.seller_action in {"approved", "edited"}
+                    and draft_doc.final_reply_text
+                    and (
+                        not reconstructed_thread
+                        or draft_doc.final_reply_text != reconstructed_thread[0].text
+                    )
+                ):
+                    acted_ms = (
+                        int(draft_doc.acted_at.timestamp() * 1000)
+                        if draft_doc.acted_at
+                        else ts_ms
+                    )
+                    reconstructed_thread.append(
+                        ThreadMessage(
+                            sender="Moderator",
+                            author_role="moderator",
+                            text=draft_doc.final_reply_text,
+                            timestamp=acted_ms,
+                        )
+                    )
+                threads_by_comment[doc.comment_id] = reconstructed_thread
+                thread = reconstructed_thread
+
+            lead_label_val: Literal["hot", "warm", "cold"] = (
+                doc.lead_label  # type: ignore[assignment]
+                if doc.lead_label in {"hot", "warm", "cold"}
+                else (mem_item.lead_label if mem_item else "cold")
+            )
+            items.append(
+                ClassifiedLiveComment(
+                    comment_id=doc.comment_id,
+                    sender=doc.user_handle,
+                    text=doc.message,
+                    author_type=mem_item.author_type if mem_item else "viewer",
+                    timestamp=int(doc.timestamp.timestamp() * 1000),
+                    intent=intent_val,
+                    intent_source=mem_item.intent_source if mem_item else "rules",
+                    intent_confidence=doc.intent_confidence,
+                    lead_score=doc.lead_score if doc.lead_score is not None else 0,
+                    lead_label=lead_label_val,
+                    needs_human_review=needs_review,
+                    reason=reason,
+                    moderation_status="blocked" if doc.safety_blocked else "allowed",
+                    moderation_reason=doc.safety_reason,
+                    answer_draft=answer_draft,
+                    thread_messages=list(thread),
+                )
+            )
+        return items
+
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        if db_facade is not None:
+            app.state.db = db_facade
+            try:
+                existing = await _load_comments_from_repository(
+                    db_facade, limit=MAX_STORED_COMMENTS
+                )
+                for item in reversed(existing):
+                    _upsert_recent_comment(item)
+            except DatabaseError as exc:
+                logger.warning("Failed to hydrate initial comments from custom facade: %s", exc)
+            yield
+            return
+
         app.state.db = None
         mongo_connected = False
         redis_connected = False
@@ -317,6 +503,11 @@ def create_app(
                 )
                 await seed_demo_store_data(facade, tenant_ctx, session_id=session_id)
                 app.state.db = facade
+                existing = await _load_comments_from_repository(
+                    facade, limit=MAX_STORED_COMMENTS
+                )
+                for item in reversed(existing):
+                    _upsert_recent_comment(item)
             except DatabaseError as exc:
                 logger.warning("Database session initialization failed, using in-memory mode: %s", exc)
 
@@ -329,6 +520,7 @@ def create_app(
                 await mongo_manager.close()
 
     app = FastAPI(title="Livestream AI Backend", version="0.1.0", lifespan=lifespan)
+    app.state.db = db_facade
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],
@@ -353,8 +545,17 @@ def create_app(
     @app.get("/health")
     async def health() -> dict[str, str | int | bool | None]:
         ollama = get_ollama_provider()
-        mongo_ping = await mongo_manager.ping()
-        redis_ping = await redis_manager.ping()
+        facade: StoreDatabaseFacade | None = getattr(app.state, "db", None)
+        mongo_ping = (
+            await facade.mongo.ping()
+            if facade is not None and getattr(facade, "mongo", None) is not None
+            else await mongo_manager.ping()
+        )
+        redis_ping = (
+            await facade.redis.ping()
+            if facade is not None and getattr(facade, "redis", None) is not None
+            else await redis_manager.ping()
+        )
         return {
             "status": "ok",
             "ai_status": "ready",
@@ -371,6 +572,11 @@ def create_app(
 
     @app.post("/api/plugin/comments", response_model=ClassifiedLiveComment)
     async def receive_comment(payload: LiveCommentPayload) -> ClassifiedLiveComment:
+        safe_incoming_id = _to_safe_id(payload.comment_id)
+        for existing in recent_comments:
+            if existing.comment_id == safe_incoming_id:
+                return existing
+
         author_type = payload.author_type.casefold()
         if author_type in {"viewer", "member"}:
             retry_after = viewer_rate_limiter.consume(payload.sender)
@@ -390,28 +596,24 @@ def create_app(
             intent_model=intent_model,
             moderator=moderator,
         )
-        if len(recent_comments) == MAX_STORED_COMMENTS:
-            evicted = recent_comments[0]
-            if evicted.comment_id != result.comment_id:
-                threads_by_comment.pop(evicted.comment_id, None)
         thread = threads_by_comment.setdefault(result.comment_id, [])
-        auto_replied = bool(
+        draft_ready = bool(
             result.answer_draft
             and result.answer_draft.status == "answered"
             and not result.needs_human_review
             and not result.answer_draft.needs_human_review
             and result.answer_draft.answer
         )
-        if auto_replied and not any(m.author_role == "ai" for m in thread):
+        if draft_ready and not any(m.author_role == "ai" for m in thread):
             thread.append(
                 ThreadMessage(
-                    sender="AI Agent",
+                    sender="AI Draft",
                     author_role="ai",
                     text=result.answer_draft.answer,
                 )
             )
         result.thread_messages = thread
-        recent_comments.append(result)
+        _upsert_recent_comment(result)
 
         facade: StoreDatabaseFacade | None = getattr(app.state, "db", None)
         if facade is not None:
@@ -442,7 +644,7 @@ def create_app(
                         session_id,
                         high_lead_comments=1 if result.lead_label == "hot" else 0,
                         drafts_generated=1 if result.answer_draft is not None else 0,
-                        drafts_approved=1 if auto_replied else 0,
+                        drafts_approved=0,
                     )
                 if (
                     persistence.inserted_into_mongo
@@ -460,12 +662,10 @@ def create_app(
                             confidence=1.0 if result.answer_draft.status == "answered" else 0.0,
                             grounding_passed=not result.answer_draft.needs_human_review,
                             fallback_used=result.answer_draft.status != "answered",
-                            seller_action="approved" if auto_replied else "pending",
-                            final_reply_text=(
-                                result.answer_draft.answer[:5000] if auto_replied else None
-                            ),
-                            acted_by_user_id="ai-agent" if auto_replied else None,
-                            acted_at=utc_now() if auto_replied else None,
+                            seller_action="pending",
+                            final_reply_text=None,
+                            acted_by_user_id=None,
+                            acted_at=None,
                             sources=[
                                 EvidenceSourceSnapshot(
                                     source_type=s.source_type,
@@ -486,6 +686,15 @@ def create_app(
     async def list_comments(
         limit: int = Query(default=100, ge=1, le=MAX_STORED_COMMENTS),
     ) -> list[ClassifiedLiveComment]:
+        facade: StoreDatabaseFacade | None = getattr(app.state, "db", None)
+        if facade is not None:
+            try:
+                repo_items = await _load_comments_from_repository(facade, limit=limit)
+                for item in reversed(repo_items):
+                    _upsert_recent_comment(item)
+                return repo_items[:limit]
+            except DatabaseError as exc:
+                logger.warning("Repository comment read failed, using in-memory fallback: %s", exc)
         return list(reversed(recent_comments))[:limit]
 
     @app.post(
@@ -507,28 +716,48 @@ def create_app(
                     tenant_ctx, safe_comment_id
                 )
                 if draft is not None:
+                    was_pending = draft.seller_action == "pending"
                     await facade.answer_drafts.record_seller_action(
                         tenant_ctx,
                         draft.draft_id,
                         action="approved" if payload.author_role == "ai" else "edited",
                         final_reply_text=payload.text[:5000],
                     )
+                    if was_pending:
+                        await facade.sessions.increment_metrics(
+                            tenant_ctx,
+                            session_id,
+                            drafts_approved=1,
+                        )
             except DatabaseError as exc:
                 logger.warning("Failed to persist thread reply for %s: %s", safe_comment_id, exc)
 
         return thread
 
     @app.get("/api/plugin/summary")
-    def summarize_comments() -> dict[str, object]:
-        intent_counts = Counter(comment.intent for comment in recent_comments)
-        lead_counts = Counter(comment.lead_label for comment in recent_comments)
+    async def summarize_comments() -> dict[str, object]:
+        facade: StoreDatabaseFacade | None = getattr(app.state, "db", None)
+        source_comments: list[ClassifiedLiveComment] = list(recent_comments)
+        storage_mode = "in_memory"
+        if facade is not None:
+            try:
+                source_comments = await _load_comments_from_repository(
+                    facade, limit=MAX_STORED_COMMENTS
+                )
+                storage_mode = "mongodb"
+            except DatabaseError as exc:
+                logger.warning("Repository summary read failed, using in-memory fallback: %s", exc)
+
+        intent_counts = Counter(comment.intent for comment in source_comments)
+        lead_counts = Counter(comment.lead_label for comment in source_comments)
         return {
-            "comment_count": len(recent_comments),
+            "storage_mode": storage_mode,
+            "comment_count": len(source_comments),
             "moderated_comment_count": sum(
-                comment.moderation_status == "blocked" for comment in recent_comments
+                comment.moderation_status == "blocked" for comment in source_comments
             ),
             "needs_human_review_count": sum(
-                comment.needs_human_review for comment in recent_comments
+                comment.needs_human_review for comment in source_comments
             ),
             "hot_lead_count": lead_counts.get("hot", 0),
             "lead_counts": dict(sorted(lead_counts.items())),

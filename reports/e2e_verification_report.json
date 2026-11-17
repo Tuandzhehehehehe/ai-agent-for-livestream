@@ -1,0 +1,73 @@
+{
+  "verified_at": "2026-11-17T06:55:49.779870+00:00",
+  "long_session_stability": {
+    "submitted_unique_comments": 300,
+    "duplicate_retransmissions_sent": 25,
+    "persisted_in_mongodb_repository": 300,
+    "returned_by_list_endpoint": 300,
+    "returned_by_cold_start_repository_read": 300,
+    "lost_comments": 0,
+    "duplicate_records_created": 0,
+    "http_200_count": 300,
+    "latency_ms": {
+      "mean": 7.75,
+      "p50": 7.71,
+      "p95": 15.0,
+      "p99": 19.45,
+      "max": 30.98
+    }
+  },
+  "database_repository_verification": {
+    "storage_mode": "mongodb",
+    "seeded_products_count": 12,
+    "seeded_orders_count": 6,
+    "session_metrics": {
+      "total_comments": 300,
+      "high_lead_comments": 90,
+      "drafts_generated": 200,
+      "drafts_approved": 1
+    },
+    "thread_seller_action_recorded": "edited",
+    "cold_start_repository_hydration_passed": true
+  },
+  "rate_limit_and_moderation": {
+    "burst_test_statuses": [
+      200,
+      200,
+      200,
+      200,
+      200,
+      429
+    ],
+    "blocked_comments_count": 12,
+    "needs_human_review_count": 154,
+    "hot_lead_count": 90,
+    "intent_counts": {
+      "complaint": 17,
+      "consequential_action": 18,
+      "price_question": 36,
+      "product_information": 36,
+      "promotion_question": 18,
+      "prompt_injection": 17,
+      "refund_request": 18,
+      "return_policy": 37,
+      "shipping_policy": 37,
+      "spam_or_irrelevant": 12,
+      "stock_question": 36,
+      "unknown": 18
+    }
+  },
+  "multi_agent_and_rag": {
+    "orchestrator_backend": "langgraph",
+    "vector_rag_backend": "faiss",
+    "agent_count": 5,
+    "registered_tools_count": 8,
+    "sample_rag_top_hit": "SYN-FAQ-009"
+  },
+  "extension_ui_contract": {
+    "auto_replied_badge_occurrences": 0,
+    "draft_ready_badge_occurrences": 1,
+    "all_answers_marked_is_draft": true,
+    "youtube_chat_write_actions": 0
+  }
+}

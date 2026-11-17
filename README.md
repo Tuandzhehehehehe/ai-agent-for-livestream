@@ -1,150 +1,113 @@
 # AI hỗ trợ phiên livestream bán hàng
 
-Mô-đun AI/Data cho đồ án tốt nghiệp “Xây dựng AI Agent hỗ trợ phiên livestream bán hàng”. Repository gồm thư viện AI, FastAPI backend local, Chrome extension YouTube Live read-only, cùng database layer MongoDB/Redis. Database layer hiện là module tích hợp riêng; API live vẫn dùng in-memory buffer và chưa có xác thực.
+Hệ thống AI Agent, RAG và Data cho đồ án tốt nghiệp **“Xây dựng AI Agent hỗ trợ phiên livestream bán hàng”**. Repository bao gồm:
+- **Gói `ai`**: Multi-Agent StateGraph Orchestrator (`ai.multi_agent`), Hybrid Vector RAG (`ai.vector_rag` hỗ trợ `FAISS`, `ChromaDB` và cosine embeddings nội bộ), Function/Tool Calling (`ai.agent_tools`), Customer Q&A có đối chiếu nguồn (`ai.customer_qa`), phân tích vận hành phiên live (`ai.operations`) và bộ đánh giá định lượng (`ai.evaluation`).
+- **FastAPI Backend (`backend/`)**: Kết nối cơ sở dữ liệu đa gian hàng **MongoDB & Redis** thông qua `StoreDatabaseFacade` (tự động fallback về bộ nhớ đệm `recent_comments` khi chạy độc lập không có Docker/DB), tích hợp mô hình phân loại ý định huấn luyện cục bộ (`backend.local_model`), hỗ trợ Ollama LLM cục bộ tùy chọn (`backend.ollama_provider`), giao diện **Operator Console Dashboard** (`/dashboard`), và bộ kiểm thử End-to-End phiên livestream dài (`backend.e2e_verification`).
+- **Frontend Dashboard (`frontend/`)**: Ứng dụng Next.js / React cho người vận hành theo dõi luồng bình luận thời gian thực, kiểm thử Multi-Agent + Tool Calling, tra cứu Vector RAG, quản lý sản phẩm/tồn kho và đơn hàng livestream.
+- **YouTube Live Chrome Extension (`extension/`)**: Thu thập bình luận thời gian thực ở chế độ **chỉ đọc đối với khung chat công khai (Read-only Public Chat)**, cung cấp nút bật/tắt AI trên trình phát YouTube, thanh chip lọc bình luận đáng chú ý và hộp thoại nháp nội bộ (`Draft Ready` / `Needs Review`) cho Moderator.
 
-## Mục tiêu và phạm vi
+## Mục tiêu và phạm vi an toàn
 
-- Trả lời câu hỏi dựa trên catalog, FAQ và policy mô phỏng, kèm source ID.
-- Chuyển câu hỏi thiếu bằng chứng, mâu thuẫn, vượt phạm vi hoặc yêu cầu thao tác quan trọng sang người vận hành.
-- Phân loại bình luận, tổng hợp câu hỏi lặp, issue và sự kiện phiên livestream được cung cấp.
-- Đánh giá hành vi bằng các golden case tổng hợp, tái lập được và chạy offline.
+- Tạo bản nháp câu trả lời (`CustomerAnswerDraft` với `is_draft=True`) dựa trên catalog sản phẩm, FAQ và chính sách bán hàng kèm mã nguồn trích dẫn (`source_id`).
+- Chuyển các câu hỏi thiếu bằng chứng, mâu thuẫn dữ liệu, vượt phạm vi hoặc yêu cầu thao tác quan trọng (hoàn tiền, đổi giá, chốt/hủy đơn) sang trạng thái `needs_review` để người vận hành xử lý.
+- Phân loại bình luận, chấm điểm mức độ tiềm năng mua hàng (`lead_score`, `lead_label`: `hot`, `warm`, `cold`), tổng hợp câu hỏi lặp và sự kiện phiên livestream.
+- Lưu trữ và đồng bộ bình luận, bản nháp (`seller_action`: `pending`, `approved`, `edited`), thống kê phiên, sản phẩm/tồn kho và đơn hàng qua **MongoDB & Redis Repository** (`StoreDatabaseFacade`).
+- **Nguyên tắc an toàn cốt lõi**: Mọi câu trả lời do AI sinh ra đều là **bản nháp (`Draft Ready`)**. Extension và Backend **tuyệt đối không tự động gõ hay gửi tin nhắn vào khung chat công khai của YouTube Live** và không tự động thực thi giao dịch thanh toán/hoàn tiền.
 
-Extension kết nối khung chat YouTube Live chỉ để thu thập bình luận. Backend không lưu đơn hàng, không xử lý thanh toán/hoàn tiền, không cung cấp màn hình phê duyệt và không tự gửi tin nhắn hay thực hiện thao tác kinh doanh.
+## Kiến trúc mô-đun
 
-## Khả năng theo phase
-
-- **Phase 0:** Python package metadata và cấu hình môi trường.
-- **Phase 1:** Dataclass có kiểu cho Product/FAQ/SalesPolicy; JSON mô phỏng; loader, validation, accessors và keyword search.
-- **Phase 2:** Intent classification theo rule, retrieval và bản nháp customer Q&A có source reference.
-- **Phase 3:** Review gate cho injection đã nhận diện, yêu cầu consequential, dữ liệu thiếu/mâu thuẫn và input quá dài. Giới hạn message là 4096 ký tự.
-- **Phase 4:** Phân loại comment/event, nhóm câu hỏi và issue lặp, tóm tắt phiên cùng recommendation dạng draft có nguồn.
-- **Phase 5:** Golden-case evaluation, metric có numerator/denominator, JSON report và Markdown report.
-
-## Kiến trúc
-
-- `ai.data`: schema, tải/kiểm tra dữ liệu mô phỏng, truy vấn và search.
-- `ai.customer_qa`: `classify_intent`, `retrieve_evidence`, `draft_customer_answer`; trả `CustomerAnswerDraft` với status `answered` hoặc `needs_review`.
-- `ai.operations`: `SimulatedComment`, `SimulatedEvent`, classifier, aggregator và `summarize_session`; không gọi hệ thống ngoài.
-- `ai.evaluation`: scenarios tách khỏi demo catalog, runner và metric.
-- `backend.local_model`: TF-IDF character n-gram + Logistic Regression, train local từ corpus synthetic song ngữ; chỉ fallback khi rule classifier chưa nhận diện intent.
-- `backend.main`: API nhận bình luận, rate limit/moderation và answer draft dựa trên retrieval có nguồn. Ollama local là tùy chọn; không dùng cloud LLM.
-- `backend.database`, `backend.repositories`, `backend.infrastructure`: lớp MongoDB/Redis multi-tenant và repository. Hiện chưa được nối vào routes live của `backend.main`, nên API vẫn dùng in-memory buffer.
-- `extension`: collector YouTube Live read-only; không tự động trả lời chat.
+- `ai.multi_agent`: Điều phối 5 tác tử chuyên biệt trên đồ thị trạng thái (`LangGraph` StateGraph hoặc bộ thực thi đồ thị tích hợp sẵn): `ModerationGuardAgent`, `IntentTriageAgent`, `ToolCallingRAGAgent`, `AnswerSynthesisReviewAgent` và `OperationsAnalyticsAgent`.
+- `ai.vector_rag`: Kho truy xuất ngữ nghĩa Hybrid Vector RAG hỗ trợ `FAISS`, `ChromaDB` và vector cosine similarity nội bộ trên sản phẩm, FAQ và chính sách đang hiệu lực.
+- `ai.agent_tools`: Định nghĩa schema và thực thi Function Calling / Tool Calling (`search_catalog_products`, `check_product_inventory`, `lookup_Order_status`, `get_shipping_and_return_policy`, `search_knowledge_base_rag`).
+- `ai.customer_qa`: `classify_intent`, `retrieve_evidence`, `draft_customer_answer`; trả `CustomerAnswerDraft` với trạng thái `answered` hoặc `needs_review`.
+- `ai.data`: Schema dữ liệu, kiểm tra tính hợp lệ, truy vấn catalog, FAQ, chính sách bán hàng và đơn hàng mô phỏng.
+- `ai.operations`: `SimulatedComment`, `SimulatedEvent`, phân loại bình luận, gom nhóm câu hỏi/vấn đề lặp và tóm tắt phiên (`summarize_session`).
+- `ai.evaluation`: Bộ kịch bản kiểm thử chuẩn (golden cases) và báo cáo định lượng.
+- `backend.local_model`: Mô hình TF-IDF character n-gram + Logistic Regression huấn luyện cục bộ trên tập dữ liệu song ngữ Anh/Việt, đóng vai trò fallback khi bộ luật từ khóa trả về `unknown`.
+- `backend.main`: FastAPI server cung cấp các route nhận/đọc bình luận (`/api/plugin/comments`), luồng duyệt/ghi chú nháp nội bộ (`/api/plugin/comments/{id}/thread`), thống kê phiên (`/api/plugin/summary`), Multi-Agent & Vector RAG (`/api/agent/*`), quản lý cửa hàng/đơn hàng (`/api/store/*`) và giao diện `/dashboard`.
+- `backend.database`, `backend.repositories`, `backend.infrastructure`: Lớp cơ sở dữ liệu đa gian hàng (Multi-tenant MongoDB + Redis) được nối trực tiếp vào các route của `backend.main` thông qua `StoreDatabaseFacade` cho cả chiều ghi và chiều đọc, kèm fallback `recent_comments` trong bộ nhớ khi chạy không có DB.
+- `backend.e2e_verification` & `tests/`: Bộ kiểm thử End-to-End và kiểm thử chịu tải phiên livestream dài (300+ bình luận liên tục, kiểm chứng 0% mất bình luận, chống trùng lặp ID, kiểm tra đọc/ghi Repository và nhãn giao diện).
 
 ## Cấu trúc thư mục
 
 ```text
 ai/
+  multi_agent.py     # Multi-Agent StateGraph orchestrator (5 specialized agents)
+  vector_rag.py      # Hybrid Vector RAG (FAISS / ChromaDB / cosine fallback)
+  agent_tools.py     # Function-calling tool definitions and dispatcher
   customer_qa/       # schemas, intent, safety, retrieval, answer service
-  data/              # models, loading, access, search, synthetic JSON
+  data/              # models, loading, access, search, synthetic JSON (products, faqs, policies, orders)
   evaluation/        # scenarios.json, runner.py, metrics.py
   operations/        # schemas, classification, aggregation, summary
-  __init__.py
-docs/                # kiến trúc, contract tích hợp, evaluation report
-extension/           # Chrome Extension thu thập bình luận YouTube Live (read-only)
-backend/             # FastAPI backend, local model và multi-tenant database layer
-    database/          # MongoDB/Redis managers, Pydantic models, validators, indexes, facade
-    repositories/      # Multi-tenant repositories (tenant, catalog, livestream)
-    infrastructure/    # Redis operational cache, key conventions, Redis Streams
-    local_model.py     # Train/evaluate local intent classifier
-    intent_training_data.json # 260 mẫu synthetic để train classifier
-    intent_holdout_data.json # 65 mẫu synthetic holdout, tách khỏi train
-reports/             # JSON evaluation reports
-docker-compose.yml   # MongoDB & Redis local infrastructure
-.env.example         # Database & Redis environment configuration template
-AI_HANDOFF_REPORT.md
+backend/
+  main.py            # FastAPI backend wired to StoreDatabaseFacade + in-memory fallback
+  dashboard.html     # Built-in React Operator Console served at GET /dashboard
+  local_model.py     # Train/evaluate local TF-IDF + LogisticRegression intent classifier
+  ollama_provider.py # Optional local Ollama client for grounded synthesis & tool calling
+  e2e_verification.py# End-to-end & long-session stability verification runner
+  database/          # MongoDB/Redis managers, Pydantic v2 models, validators, indexes, seed, facade
+  repositories/      # Multi-tenant repositories (tenant, catalog, livestream, orders)
+  infrastructure/    # Redis operational cache, key conventions, Redis Streams
+frontend/            # Next.js / React Operator Dashboard application
+extension/           # Chrome Extension YouTube Live (read-only public chat + operator chip/popover UI)
+tests/               # Automated end-to-end & repository integration test suite
+docs/                # Kiến trúc, hợp đồng tích hợp, hướng dẫn DB và các báo cáo đánh giá/kiểm thử
+reports/             # JSON evaluation & E2E verification reports
+docker-compose.yml   # MongoDB 7.0 & Redis 7.2 local infrastructure
+.env.example         # Cấu hình môi trường mẫu
+AI_HANDOFF_REPORT.md # Báo cáo bàn giao chi tiết
 pyproject.toml
 ```
 
-## Môi trường và chạy trên Windows
+## Môi trường và chạy kiểm chứng trên Windows
 
-Yêu cầu Python **3.11 trở lên**. Cài dependencies backend/local model bằng `py -m pip install -e ".[server]"`. Build backend trong `pyproject.toml` khai báo `setuptools>=68`. Backend hoạt động mặc định không cần API key hay model LLM; Ollama là tuỳ chọn chạy local.
-
-Mở PowerShell tại thư mục gốc repository (thư mục chứa `pyproject.toml`) và chạy:
+Yêu cầu Python **3.11 trở lên**. Cài đặt dependencies cho backend và công cụ kiểm thử:
 
 ```powershell
-py --version
-py -m compileall -q ai backend
-py -m ai.evaluation.runner
-py -m backend.local_model
+python -m pip install -e ".[server]"
 ```
 
-Lệnh evaluator tạo/cập nhật `reports/evaluation_report.json` và `docs/EVALUATION_REPORT.md`. `py -m backend.local_model` train model local từ corpus synthetic. Các file JSON/HTML backend được cấu hình trong `pyproject.toml` để đi cùng package.
-
-## Ví dụ sử dụng
-
-Customer Q&A:
-
-```python
-from ai.customer_qa import CustomerQuestionRequest, draft_customer_answer
-
-draft = draft_customer_answer(
-    CustomerQuestionRequest(
-        session_id="demo-session",
-        comment_id="demo-comment-1",
-        text="What is the shipping policy?",
-    )
-)
-
-if draft.status == "needs_review" or draft.needs_human_review:
-    print(draft.reason)
-else:
-    print(draft.answer)
-    print([source.source_id for source in draft.sources])
-```
-
-Tất cả answer đều là draft. `answered` không có nghĩa đã gửi cho khách; Member 2 cần kiểm tra sources. `needs_review` phải được chuyển tới người vận hành.
-
-Tóm tắt phiên mô phỏng:
-
-```python
-from ai.operations import SimulatedComment, SimulatedEvent, summarize_session
-
-summary = summarize_session(
-    comments=[
-        SimulatedComment("c1", "What is the shipping policy?"),
-        SimulatedComment("c2", "What is the shipping policy?"),
-        SimulatedComment("c3", "The item arrived damaged"),
-    ],
-    events=[
-        SimulatedEvent("e1", "stream_interruption", "Synthetic pause event"),
-    ],
-)
-
-print(summary.overview)
-print(summary.frequent_questions)
-print(summary.recommendations)
-```
-
-`summary.recommendations` là gợi ý cần operator xem xét, có `sources`; package không thực hiện hành động.
-
-## Cài đặt và sử dụng Extension YouTube Live
-
-Extension chạy ngầm (Headless - không giao diện, **không tự động trả lời vào chat**) trên trình duyệt (Chrome, Brave, Cốc Cốc, Edge) tự động lắng nghe và thu thập bình luận theo thời gian thực từ luồng chat YouTube Live đồng bộ về AI Backend.
-
-### 1. Cài đặt vào trình duyệt
-
-1. Mở trình duyệt Chrome hoặc Brave, truy cập:
-   ```text
-   chrome://extensions/
-   ```
-2. Bật công tắc "Developer mode" (Chế độ cho nhà phát triển) ở góc trên bên phải.
-3. Nhấn nút "Load unpacked" (Tải tiện ích đã giải nén).
-4. Chọn thư mục `extension` trong thư mục dự án, ví dụ:
-   ```text
-    D:\project_2\extension
-   ```
-
-### 2. Khởi động Backend AI
-
-Từ thư mục gốc repository, cài dependencies và chạy API. Không cần API key hoặc kết nối LLM; model intent local được train từ corpus synthetic khi khởi động:
+Chạy toàn bộ các lệnh biên dịch, đánh giá mô hình và kiểm thử End-to-End tại thư mục gốc repository:
 
 ```powershell
-py -m pip install -e ".[server]"
-py -m uvicorn backend.main:app --host 127.0.0.1 --port 8000 --reload
+python -m compileall -q ai backend tests
+python -m ai.evaluation.runner
+python -m backend.local_model
+python -m backend.e2e_verification
+python -m unittest discover -s tests -v
 ```
 
-API nhận bình luận tại `POST /api/plugin/comments`; rule classifier chạy trước, model TF-IDF character n-gram + Logistic Regression chỉ làm fallback khi rules chưa nhận diện intent. RAG hiện dùng keyword/entity/intent-filtered retrieval trên corpus nhỏ (6 products, 8 FAQs, 4 policies); chưa thêm FAISS/Chroma vì chưa có benchmark chứng minh vector retrieval có lợi cho 18 records. Draft cần source; thiếu evidence thì `needs_review`. Ollama chạy local mặc định tắt và có thể bật trong `.env`:
+- `python -m ai.evaluation.runner`: Chạy bộ golden cases và cập nhật `reports/evaluation_report.json` cùng `docs/EVALUATION_REPORT.md`.
+- `python -m backend.local_model`: Huấn luyện và đánh giá mô hình phân loại ý định trên tập holdout độc lập, xuất `reports/local_intent_model_report.json` và `docs/LOCAL_MODEL_EVALUATION.md`.
+- `python -m backend.e2e_verification`: Chạy kiểm thử toàn trình (End-to-End) và phiên livestream dài (300 bình luận liên tục + 25 bản tin trùng lặp DOM + kiểm tra đọc/ghi MongoDB Repository + Multi-Agent/RAG + kiểm tra nhãn giao diện Extension), xuất `reports/e2e_verification_report.json` và `docs/E2E_VERIFICATION_REPORT.md`.
+
+## Khởi động Hạ tầng Database, Backend và Dashboard
+
+### 1. Khởi động MongoDB & Redis (Tùy chọn khuyến nghị)
+
+```powershell
+docker compose up -d
+```
+
+Khi khởi động, `backend.main` tự động kết nối MongoDB/Redis, khởi tạo schema validators/indexes, nạp dữ liệu mẫu (`seed_demo_store_data`) và đồng bộ hóa bình luận qua `StoreDatabaseFacade`. Nếu không bật Docker, backend tự động chuyển sang chế độ `in_memory` mà không báo lỗi dừng chương trình.
+
+### 2. Chạy FastAPI Backend & Operator Console
+
+```powershell
+python -m uvicorn backend.main:app --host 127.0.0.1 --port 8000 --reload
+```
+
+- Mở trình duyệt truy cập **`http://127.0.0.1:8000/dashboard`** để sử dụng **Livestream Sales Multi-Agent & RAG Console**.
+- (Tùy chọn) Chạy thêm ứng dụng Next.js tại thư mục `frontend/`:
+  ```powershell
+  cd frontend
+  npm install
+  npm run dev
+  ```
+
+### 3. Cấu hình Ollama Local LLM (Tùy chọn)
+
+Mặc định hệ thống chạy hoàn toàn độc lập không cần API key hay LLM. Nếu muốn sử dụng Ollama cục bộ để diễn đạt bản nháp và gọi hàm (Tool Calling):
 
 ```env
 OLLAMA_ENABLED=false
@@ -153,34 +116,26 @@ OLLAMA_MODEL=qwen2.5:3b-instruct
 OLLAMA_TIMEOUT_SECONDS=30
 ```
 
-Muốn bật Ollama: cài Ollama theo hướng dẫn chính thức, chạy `ollama pull qwen2.5:3b-instruct` (không tự tải model), đặt `OLLAMA_ENABLED=true` trong `.env`, rồi restart backend. Có thể thay `OLLAMA_MODEL` bằng model Llama/Qwen đã pull. Nếu Ollama tắt, không kết nối được, hoặc trả lỗi, câu trả lời deterministic hiện có vẫn được dùng. Local intent model train trên 260 mẫu synthetic song ngữ và được đo trên holdout độc lập 65 mẫu trong `backend/intent_holdout_data.json`. Chạy `py -m backend.local_model` để train, evaluate và sinh `docs/LOCAL_MODEL_EVALUATION.md` cùng `reports/local_intent_model_report.json`. Lần chạy hiện tại: accuracy 75.4%, macro-F1 77.7%, answerable coverage 76.7%, selective accuracy 95.7%; đây không phải kết quả production. Ngưỡng local classifier cấu hình bằng `LOCAL_INTENT_CONFIDENCE_THRESHOLD` (mặc định `0.10`). Backend giới hạn mặc định 5 comment/10 giây cho mỗi viewer/member (`CHAT_RATE_LIMIT_MAX`, `CHAT_RATE_LIMIT_WINDOW_SECONDS`) và trả HTTP 429 khi vượt ngưỡng. Bộ lọc mặc định chặn một số từ tục tiếng Anh/Việt và comment có hơn 2 URL; có thể bổ sung cụm từ qua `CHAT_BLOCKED_TERMS` (cách nhau bằng dấu phẩy). Comment bị chặn có `moderation_status=blocked`; moderation chỉ đánh dấu trong API, không xóa comment khỏi YouTube. Draft được trả cùng bình luận và lưu trong danh sách qua `GET /api/plugin/comments`; thống kê có tại `GET /api/plugin/summary`. Dữ liệu catalog là synthetic/demo, tối đa 1000 bình luận gần nhất được giữ trong bộ nhớ và sẽ mất khi backend khởi động lại. Rate limit cũng chỉ nằm trong bộ nhớ và được áp dụng trong một tiến trình backend. Backend không có xác thực; chỉ bind vào loopback như lệnh trên, không expose trực tiếp ra mạng.
+## Cài đặt và sử dụng Extension YouTube Live
 
-### 3. Vận hành trên YouTube Live
+Extension kết nối với khung chat YouTube Live ở chế độ **chỉ đọc đối với khung chat công khai (không tự động gửi tin nhắn cho khách)**, đồng thời cung cấp giao diện hỗ trợ nhanh cho người vận hành ngay trên trang livestream.
 
-1. Mở một video livestream YouTube bất kỳ có khung Live Chat (hoặc YouTube Live Studio).
-2. Extension tự động nhận diện khung chat (`yt-live-chat-item-list-renderer`) và kết nối trực tiếp ở chế độ chỉ đọc (Read-only).
-3. Khi khán giả bình luận:
-   - Extension tự động trích xuất người gửi, nội dung bình luận, loại tài khoản (`viewer`, `member`, `moderator`).
-   - In log chi tiết trong Console DevTools (`F12`).
-   - Gửi dữ liệu bình luận về AI Backend (`/api/plugin/comments`) để xử lý thống kê hoặc phân loại ý định.
-   - **Tuyệt đối không tự động gõ hay gửi bất kỳ tin nhắn nào vào khung chat**.
+1. Mở trình duyệt Chrome / Brave / Edge, truy cập `chrome://extensions/`.
+2. Bật **Developer mode** (Chế độ cho nhà phát triển) ở góc trên bên phải.
+3. Nhấn **Load unpacked** (Tải tiện ích đã giải nén) và chọn thư mục `extension/` trong dự án.
+4. Mở một video YouTube Live có khung chat:
+   - Nhấn nút biểu tượng **AI** trên thanh điều khiển trình phát video để bật **Enable** (hoặc mở nhanh **Open AI Dashboard**).
+   - Khi khán giả bình luận, extension trích xuất bình luận và gửi về `POST /api/plugin/comments`.
+   - Các bình luận có ý định mua hàng hoặc có bản nháp câu trả lời sẽ xuất hiện dưới dạng **thanh chip ngang** phía trên khung chat.
+   - Nhấn vào chip để mở hộp thoại nội bộ xem nguồn trích dẫn (`sources`), trạng thái **`Draft Ready`** (đã có bản nháp AI) hoặc **`Needs Review`** (cần người vận hành kiểm tra), và lưu ghi chú/duyệt nháp nội bộ (`Save Note`).
 
-### 4. Cập nhật khi sửa code
+## Tài liệu chi tiết
 
-Khi chỉnh sửa code trong thư mục `extension/`, vào `chrome://extensions/` và nhấn nút Reload (xoay tròn) trên thẻ tiện ích để cập nhật ngay.
-
-## Dữ liệu mô phỏng và an toàn
-
-Các file `products.json`, `faqs.json`, `policies.json` được gắn nhãn synthetic/demo. Tên sản phẩm, giá, tồn kho, thời hạn vận chuyển/đổi trả và policy chỉ phục vụ phát triển/kiểm thử; **không phải dữ liệu hoặc cam kết kinh doanh thật**. Không có dữ liệu khách hàng thật.
-
-Classifier và injection checks dựa trên keyword/pattern tiếng Anh, không bảo đảm nhận diện mọi cách diễn đạt hoặc prompt injection. Dữ liệu/comment/event là input không tin cậy. Refund, thay đổi giá, đơn hàng, payment, và thao tác consequential khác không bao giờ được AI thực hiện. Khi thiếu bằng chứng, có conflict, hoặc ngoài phạm vi, cần người thật xử lý.
-
-## Tài liệu
-
-- [Kiến trúc AI](docs/AI_ARCHITECTURE.md)
-- [Contract tích hợp Member 2](docs/AI_INTEGRATION_CONTRACT.md)
-- [Báo cáo evaluation](docs/EVALUATION_REPORT.md)
-- [Báo cáo train/evaluation local model](docs/LOCAL_MODEL_EVALUATION.md)
-- [Báo cáo bàn giao chi tiết](AI_HANDOFF_REPORT.md)
-- [Kế hoạch Extension YouTube Live](docs/YOUTUBE_LIVE_EXTENSION_PLAN.md)
+- [Kiến trúc AI, Backend & Extension](docs/AI_ARCHITECTURE.md)
+- [Hợp đồng tích hợp API & Runtime](docs/AI_INTEGRATION_CONTRACT.md)
 - [Hướng dẫn tích hợp Database & Redis Multi-Tenant](docs/DATABASE_INTEGRATION_GUIDE.md)
+- [Kiến trúc Extension YouTube Live](docs/YOUTUBE_LIVE_EXTENSION_PLAN.md)
+- [Báo cáo kiểm thử End-to-End & Phiên Livestream dài](docs/E2E_VERIFICATION_REPORT.md)
+- [Báo cáo đánh giá Golden Cases](docs/EVALUATION_REPORT.md)
+- [Báo cáo đánh giá Local Intent Model](docs/LOCAL_MODEL_EVALUATION.md)
+- [Báo cáo bàn giao chi tiết](AI_HANDOFF_REPORT.md)

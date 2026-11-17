@@ -1,13 +1,16 @@
-# Kế hoạch Triển khai YouTube Live AI Comment Collector Extension
+# Kiến trúc & Triển khai YouTube Live AI Comment Collector Extension
 
-Tài liệu kỹ thuật tinh gọn mô tả kiến trúc và cơ chế hoạt động của **Chrome Extension chạy ngầm (Headless - 0 UI, KHÔNG tự động trả lời)** chuyên thu thập, đồng bộ và phân tích bình luận thời gian thực từ livestream YouTube chuyển tiếp về AI Backend.
+Tài liệu kỹ thuật mô tả kiến trúc và cơ chế hoạt động của **Chrome Extension YouTube Live Comment Collector** (`extension/`): thu thập bình luận thời gian thực ở chế độ **chỉ đọc đối với khung chat công khai (Read-only Public Chat / No Auto-Reply)**, hiển thị thanh chip lọc bình luận quan trọng và hộp thoại nháp nội bộ (`Draft Ready` / `Needs Review`) dành riêng cho người vận hành.
 
 ---
 
 ## 1. Mục tiêu & Nguyên lý Thiết kế
-- **Hoàn toàn không có giao diện (Headless)**: Không popup, không overlay; chạy ngầm 100%.
-- **Chế độ Chỉ Đọc (Read-only / No Auto-Reply)**: **Tuyệt đối KHÔNG tự động gõ hay gửi tin nhắn vào khung chat YouTube**, đảm bảo an toàn 100% cho kênh livestream và không gây phiền toái cho người xem.
-- **Thu thập thời gian thực (Real-time Ingestion)**: Lắng nghe khung chat native của YouTube và trích xuất bình luận (`sender`, `text`, `author_type`, `timestamp`) đẩy về AI Backend để phân tích, phân loại câu hỏi và tổng hợp thống kê phiên live.
+- **Chế độ Chỉ Đọc đối với YouTube Live Chat (No Public Auto-Reply)**: **Tuyệt đối KHÔNG tự động gõ hay gửi tin nhắn vào khung chat công khai của YouTube**, đảm bảo an toàn 100% cho kênh livestream.
+- **Giao diện hỗ trợ người vận hành (In-Page Operator Assistant UI)**:
+  - Nút bật/tắt AI (`#livestream-ai-custom-button`) tích hợp trên thanh điều khiển trình phát YouTube cùng menu mở nhanh bảng điều khiển (`Open AI Dashboard` $\rightarrow$ `http://127.0.0.1:8000/dashboard`).
+  - Thanh chip ngang (`#livestream-ai-message-row`) hiển thị tối đa 50 bình luận đáng chú ý đã qua lọc (loại bỏ spam/blocked/prompt injection).
+  - Hộp thoại chi tiết nội bộ (`#livestream-ai-detail-popover`) hiển thị phân loại intent, nguồn trích dẫn (`sources`), nhãn trạng thái **`Draft Ready`** hoặc **`Needs Review`**, bản nháp gợi ý từ AI (`AI Draft`) và ô lưu ghi chú/chỉnh sửa nháp nội bộ của Moderator.
+- **Thu thập thời gian thực (Real-time Ingestion)**: Lắng nghe khung chat native của YouTube (`yt-live-chat-item-list-renderer #items`), trích xuất bình luận (`id`, `sender`, `text`, `authorType`, `timestamp`) và đồng bộ về AI Backend (`POST /api/plugin/comments`).
 
 ---
 
@@ -15,10 +18,11 @@ Tài liệu kỹ thuật tinh gọn mô tả kiến trúc và cơ chế hoạt �
 
 ```mermaid
 flowchart LR
-    A["Khán giả bình luận trên YouTube Live"] --> B["Content Script (content.js)\nBắt DOM iframe/top"]
-    B --> C["Trích xuất thông tin\n• sender\n• text\n• author_type (viewer, member, moderator, owner)"]
-    C --> D["Background (service_worker.js)"]
-    D --> E["AI Backend (/api/plugin/comments)\nPhân loại ý định & Thống kê"]
+    A["Khán giả bình luận trên YouTube Live"] --> B["Content Script (content.js)\nBắt DOM iframe/top & lọc trùng seenIds"]
+    B --> C["Background (service_worker.js)\nPOST /api/plugin/comments"]
+    C --> D["AI Backend (backend.main)\nPhân loại Intent, RAG Draft & Lưu MongoDB/Redis"]
+    D --> E["Chip Strip & Popover nội bộ\nHiển thị nhãn Draft Ready / Needs Review"]
+    E --> F["Moderator lưu ghi chú / duyệt nháp\nPOST /api/plugin/comments/{id}/thread"]
 ```
 
 ---
@@ -26,34 +30,25 @@ flowchart LR
 ## 3. Cơ chế Kỹ thuật Then chốt
 
 ### 3.1. Hỗ trợ Iframe Chat (`all_frames: true`) & SPA Navigation
-- YouTube Live nhúng khung chat trong iframe (`#chatframe` hoặc `/live_chat`).
-- `manifest.json` cấu hình `"all_frames": true` giúp script bắt đúng document chứa danh sách chat.
-- Lắng nghe `yt-navigate-finish` để tự động tái kết nối khi chuyển video mà không cần F5.
+- YouTube Live nhúng khung chat trong iframe (`iframe#chatframe` hoặc đường dẫn `/live_chat`).
+- `manifest.json` cấu hình `"all_frames": true` giúp script chạy ở cả trang xem video (gắn nút điều khiển trên player) và trong iframe chat (thu thập bình luận & gắn thanh chip).
+- Đồng bộ trạng thái bật/tắt (`AI_STATE_CHANGED`) giữa trang chính, iframe chat và `chrome.storage.session` theo từng tab.
+- Lắng nghe `yt-navigate-finish` để tự động đồng bộ lại trạng thái khi chuyển video mà không cần tải lại trang.
 
-### 3.2. Bóc tách Bình luận Thời gian thực
-- **Container**: `yt-live-chat-item-list-renderer #items`.
-- **Selector tin nhắn**: `yt-live-chat-text-message-renderer`.
+### 3.2. Bóc tách Bình luận Thời gian thực & Khử trùng lặp
+- **Container**: `yt-live-chat-item-list-renderer #items, #item-scroller #items`.
+- **Selector tin nhắn**: `yt-live-chat-text-message-renderer, yt-live-chat-paid-message-renderer`.
 - **Thông tin trích xuất**:
+  - `id`: ID chuẩn hóa an toàn (`[A-Za-z0-9._@-]+`, tối đa 128 ký tự).
   - `sender`: Tên khán giả (`#author-name`).
   - `text`: Nội dung chat (`#message`).
-  - `author_type`: Phân loại huy hiệu (`owner`, `moderator`, `member`, `viewer`).
-- **Khử trùng lặp (`seenIds`)**: Tránh thu thập lặp lại các tin nhắn cũ khi DOM re-render.
+  - `authorType`: Phân loại người gửi (`owner`, `moderator`, `member`, `viewer`).
+- **Khử trùng lặp (`seenIds`)**: Tránh gửi trùng bình luận cũ khi DOM YouTube Live render lại.
 
-### 3.3. Đồng bộ Dữ liệu về AI Backend
-Mỗi khi phát hiện bình luận mới, extension gửi qua `chrome.runtime.sendMessage`:
-```javascript
-chrome.runtime.sendMessage({
-  type: 'NEW_COMMENT',
-  payload: {
-    id: "comment_id_123",
-    sender: "nguyen_van_a",
-    text: "Sản phẩm này bảo hành bao lâu shop?",
-    author_type: "viewer",
-    timestamp: 1728283849000
-  }
-});
-```
-Service worker chuyển tiếp dữ liệu tới AI Backend (`POST /api/plugin/comments`) để lưu trữ, phục vụ phân loại câu hỏi (`ai.operations`) hoặc gợi ý cho streamer trên bảng điều khiển.
+### 3.3. Nhãn Trạng thái Rõ ràng (Không gây hiểu nhầm Auto-Reply)
+- Khi bình luận cần người thật kiểm tra (`needs_human_review = true`), popover gắn nhãn **`Needs Review`**.
+- Khi AI tạo được bản nháp có căn cứ (`answer_draft.status === "answered"`), popover gắn nhãn **`Draft Ready`** và hiển thị tin nhắn nháp dưới tên **`AI Draft`**.
+- Mọi phản hồi trong popover chỉ lưu vào luồng trao đổi nội bộ (`POST /api/plugin/comments/{comment_id}/thread`) và cập nhật trạng thái duyệt nháp trong database (`seller_action`), **không bao giờ tự động gửi ra khung chat YouTube**.
 
 ---
 
@@ -61,23 +56,12 @@ Service worker chuyển tiếp dữ liệu tới AI Backend (`POST /api/plugin/c
 
 ```text
 extension/
-├── manifest.json                  # Cấu hình Chrome Extension MV3 Headless
+├── manifest.json                  # Cấu hình Chrome Extension MV3
 ├── package.json                   # Metadata
 └── src/
     ├── background/
-    │   └── service_worker.js      # Gửi dữ liệu bình luận về AI Backend (/api/plugin/comments)
+    │   └── service_worker.js      # Kết nối AI Backend (/api/plugin/comments & /thread)
     └── content/
-        └── content.js             # Lắng nghe DOM YouTube Live và thu thập bình luận (Read-only)
+        ├── content.css            # Giao diện nút AI, thanh chip và popover nội bộ
+        └── content.js             # Lắng nghe DOM YouTube Live, hiển thị Draft Ready / Needs Review
 ```
-
----
-
-## 5. Hướng dẫn Chạy Thử Thực tế
-
-1. **Nạp Extension**:
-   - Vào `chrome://extensions/` $\rightarrow$ Bật **Developer mode** $\rightarrow$ Bấm nút Reload hoặc **Load unpacked** thư mục `extension/`.
-2. **Mở Livestream YouTube**:
-   - Mở một livestream YouTube bất kỳ có khung Live Chat (hoặc YouTube Studio).
-   - Bấm `F12` $\rightarrow$ Tab **Console** sẽ hiển thị:
-     `[YouTube Live AI] DA KET NOI TRUC TIEP vao khung chat YouTube Live! Dang lang nghe binh luan realtime.`
-   - Khi có bất kỳ ai chat, Console sẽ in ra thông tin bình luận và gửi về AI Backend mà **hoàn toàn không can thiệp hay gửi tin nhắn gì vào khung chat**.

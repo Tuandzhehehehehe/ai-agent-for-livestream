@@ -73,11 +73,34 @@ The FastAPI app runs locally with `py -m uvicorn backend.main:app --host
 }
 ```
 
-The response includes rule/local-model intent source, moderation status, and an
-optional answer draft with evidence sources. `GET /api/plugin/comments` returns
-recent in-memory comments; `GET /api/plugin/summary` returns counts; `GET
-/health` is the health check. The backend has no authentication or persistence
-and should stay bound to loopback. Rate-limited requests receive HTTP 429.
+The response includes rule/local-model intent source, lead score/label,
+moderation status, an optional answer draft with evidence sources, and private
+`thread_messages`.
+
+Implemented routes in `backend.main`:
+- `POST /api/plugin/comments`: ingests comment, enforces viewer rate limits
+  (HTTP 429) and moderation, runs intent classification & grounded Q&A draft
+  generation, and persists the comment, session metrics, and pending
+  `AnswerDraftDocument` via `StoreDatabaseFacade` (MongoDB + Redis) with
+  in-memory fallback.
+- `GET /api/plugin/comments`: reads recent session comments and drafts from the
+  MongoDB repository via `StoreDatabaseFacade` when connected, falling back to
+  the bounded in-memory `deque` (`recent_comments`).
+- `POST /api/plugin/comments/{comment_id}/thread`: appends a message to the
+  comment's private moderator/AI thread and records `seller_action`
+  (`approved` or `edited`) on the corresponding `AnswerDraftDocument`.
+- `GET /api/plugin/summary`: returns `storage_mode` (`mongodb` or `in_memory`),
+  total comments, moderated count, human-review count, hot-lead count, and
+  intent/lead distributions.
+- `GET /api/agent/architecture`, `GET /api/agent/tools`,
+  `POST /api/agent/chat`, `POST /api/agent/rag/search`: Multi-Agent StateGraph
+  execution, tool-calling registry, and Hybrid Vector RAG search.
+- `GET /api/store/products`, `GET /api/store/orders`, `POST /api/store/seed`:
+  store catalog, inventory, and demo order endpoints backed by MongoDB with
+  synthetic fallback.
+- `GET /dashboard` (and `frontend/`): Operator Console UI.
+- `GET /health`: health check reporting AI model, Ollama, MongoDB, Redis,
+  Multi-Agent orchestrator, and Vector RAG status.
 
 ## Operations assistance
 
@@ -136,7 +159,13 @@ agrees one. Results are fixture checks only, not production accuracy claims.
 
 ## Runtime boundaries
 
-The `ai` package exposes Python functions and typed values; `backend.main`
-provides the HTTP routes. Storage is process-memory only. Authentication,
-durable persistence, reviewer UI, and any approved reply workflow are not
-implemented.
+The `ai` package exposes Python functions, multi-agent orchestration, vector
+RAG, and typed values; `backend.main` provides the HTTP routes and operator
+dashboard (`/dashboard`). Multi-tenant persistence is implemented via
+`StoreDatabaseFacade` (MongoDB + Redis) for comments, drafts, session metrics,
+products, inventory, and orders, with an automatic in-memory fallback buffer
+when MongoDB/Redis are unavailable. Draft review actions (`pending`,
+`approved`, `edited`) are tracked per comment thread. HTTP authentication and
+automatic public posting to YouTube Live Chat are intentionally not
+implemented; the backend should remain bound to loopback and all AI answers
+remain drafts (`is_draft=True`).
