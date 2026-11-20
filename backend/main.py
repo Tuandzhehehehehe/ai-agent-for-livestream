@@ -21,7 +21,7 @@ from ai.agent_tools import execute_agent_tool, get_tool_definitions
 from ai.customer_qa import CustomerQuestionRequest, draft_customer_answer
 from ai.customer_qa.safety import MAX_CUSTOMER_MESSAGE_LENGTH
 from ai.customer_qa.schemas import AnswerStatus, Intent, SourceType
-from ai.data import load_synthetic_data
+from ai.data import get_effective_policies, load_synthetic_data
 from ai.multi_agent import MultiAgentOrchestrator, compute_lead_score
 from ai.operations import CommentClassification, SimulatedComment, classify_comment
 from ai.vector_rag import get_vector_rag_store
@@ -32,6 +32,7 @@ from backend.chat_safety import (
 )
 from backend.database import *
 from backend.database.seed import load_demo_orders, seed_demo_store_data
+from backend.infrastructure.cache import RedisKeys
 from backend.local_model import LocalIntentModel, MODEL_NAME, get_local_intent_model
 from backend.ollama_provider import get_ollama_provider
 
@@ -102,6 +103,7 @@ class ClassifiedLiveComment(BaseModel):
     moderation_status: Literal["allowed", "blocked"] = "allowed"
     moderation_reason: str | None = None
     answer_draft: "AnswerDraftResponse | None" = None
+    auto_order: dict[str, Any] | None = None
     thread_messages: list[ThreadMessage] = Field(default_factory=list)
 
 
@@ -156,6 +158,187 @@ def _safe_timestamp_to_datetime(timestamp_ms: int) -> datetime:
         return utc_now()
 
 
+_GREETING_PATTERN = re.compile(
+    r"^\s*(?:hello|hi|hey|yo|good\s+(?:morning|afternoon|evening)|xin\s+chào|chào(?:\s+shop|\s+ad)?|hi\s+shop|hello\s+shop)[!.,?\s]*$",
+    re.IGNORECASE,
+)
+_GENERAL_POLICY_PATTERN = re.compile(
+    r"\b(?:purchasing|purchase|buying|store|sales|order|shop)?\s*polic(?:y|ies)\b|\bchính\s+sách\b",
+    re.IGNORECASE,
+)
+_ORDER_ACTION_PATTERN = re.compile(
+    r"\b(?:buy|order|purchase|book|take|checkout|i\s+want(?:\s+to\s+buy|\s+to\s+order)?|give\s+me|chốt|chốt\s+đơn|mua|đặt|đặt\s+hàng|lấy)\b",
+    re.IGNORECASE,
+)
+_PRODUCT_ALIASES: dict[str, tuple[str, ...]] = {
+    "SYN-PROD-001": ("lumanest", "desk lamp", "lamp", "đèn bàn", "den ban"),
+    "SYN-PROD-002": ("pebblebrook", "ceramic mug", "mug", "cốc sứ", "ly sứ", "coc su"),
+    "SYN-PROD-003": ("kettle fern", "mini kettle", "kettle", "ấm đun", "am dun"),
+    "SYN-PROD-004": ("cloudstep", "canvas tote", "tote", "túi tote", "túi vải", "tui tote"),
+    "SYN-PROD-005": ("northstar", "knit scarf", "scarf", "khăn choàng", "khăn len", "khan"),
+    "SYN-PROD-006": ("morrow", "desk charger", "usb charger", "charger", "củ sạc", "sạc usb"),
+    "SYN-PROD-007": ("aurora", "ringlight", "ring light", "đèn livestream", "đèn ringlight"),
+    "SYN-PROD-008": ("velvet", "matte lipstick", "lipstick", "son môi", "son lì", "son"),
+    "SYN-PROD-009": ("breeze", "portable fan", "handheld fan", "fan", "quạt cầm tay", "quạt"),
+    "SYN-PROD-010": ("zenith", "wireless microphone", "microphone", "lavalier", "mic không dây", "micro", "mic"),
+    "SYN-PROD-011": ("matcha", "collagen powder", "collagen", "bột matcha"),
+    "SYN-PROD-012": ("solaris", "insulated bottle", "thermal flask", "bottle", "bình giữ nhiệt"),
+}
+_WORD_QTY: dict[str, int] = {
+    "one": 1,
+    "two": 2,
+    "three": 3,
+    "four": 4,
+    "five": 5,
+    "một": 1,
+    "hai": 2,
+    "ba": 3,
+    "bốn": 4,
+    "năm": 5,
+}
+
+
+def _extract_order_candidate(text: str) -> tuple[Any, int] | None:
+    """Detect if a comment is requesting to buy/order a catalog product and extract (Product, quantity)."""
+    cleaned = text.strip()
+    if not cleaned or "?" in cleaned or "？" in cleaned:
+        return None
+    lowered = cleaned.casefold()
+    if any(
+        blocked in lowered
+        for blocked in ("refund", "return", "cancel", "damaged", "broken", "hoàn tiền", "hủy đơn", "đổi trả")
+    ):
+        return None
+    if not _ORDER_ACTION_PATTERN.search(lowered):
+        return None
+
+    dataset = load_synthetic_data()
+    matched_product = None
+    best_alias_len = 0
+
+    for product in dataset.products:
+        prod_name_low = product.name.casefold()
+        if product.id.casefold() in lowered or prod_name_low in lowered:
+            matched_product = product
+            break
+        aliases = _PRODUCT_ALIASES.get(product.id, ())
+        for alias in aliases:
+            if re.search(rf"\b{re.escape(alias)}\b", lowered) and len(alias) > best_alias_len:
+                matched_product = product
+                best_alias_len = len(alias)
+
+    if matched_product is None:
+        return None
+
+    qty = 1
+    num_match = re.search(r"\b(\d{1,2})\b", lowered)
+    if num_match:
+        parsed_num = int(num_match.group(1))
+        if 1 <= parsed_num <= 20:
+            qty = parsed_num
+    else:
+        for word, val in _WORD_QTY.items():
+            if re.search(rf"\b{re.escape(word)}\b", lowered):
+                qty = val
+                break
+
+    return matched_product, qty
+
+
+def _fallback_livestream_draft(text: str) -> tuple[Intent, AnswerDraftResponse] | None:
+    """Provide grounded livestream draft replies for greetings, general policy queries, and RAG hits."""
+    cleaned = text.strip()
+    if not cleaned:
+        return None
+
+    dataset = load_synthetic_data()
+    if _GREETING_PATTERN.match(cleaned):
+        featured = dataset.products[:3]
+        featured_str = ", ".join(f"{p.name} (${p.price:.2f})" for p in featured)
+        first_prod = featured[0]
+        return (
+            "product_information",
+            AnswerDraftResponse(
+                answer=(
+                    f"Welcome to our livestream! Featured items today include {featured_str}. "
+                    "Ask about any product price, stock, shipping, or return policy!"
+                ),
+                intent="product_information",
+                sources=[
+                    AnswerSourceResponse(
+                        source_type="product",
+                        source_id=first_prod.id,
+                        title=first_prod.name,
+                        excerpt=first_prod.description,
+                    )
+                ],
+                status="answered",
+                needs_human_review=False,
+                reason=None,
+                is_draft=True,
+            ),
+        )
+
+    if _GENERAL_POLICY_PATTERN.search(cleaned):
+        effective = get_effective_policies(dataset.policies)
+        if effective:
+            summaries = " ".join(p.content for p in effective[:2])
+            return (
+                "shipping_policy",
+                AnswerDraftResponse(
+                    answer=f"Draft (synthetic demo data): {summaries}",
+                    intent="shipping_policy",
+                    sources=[
+                        AnswerSourceResponse(
+                            source_type="policy",
+                            source_id=p.id,
+                            title=p.category,
+                            excerpt=p.content,
+                        )
+                        for p in effective[:2]
+                    ],
+                    status="answered",
+                    needs_human_review=False,
+                    reason=None,
+                    is_draft=True,
+                ),
+            )
+
+    rag_hits = get_vector_rag_store(dataset).search(cleaned, top_k=1, min_score=0.18)
+    if rag_hits:
+        top = rag_hits[0]
+        inferred_intent: Intent = (
+            "shipping_policy"
+            if top.source_type == "policy" and "ship" in top.title.casefold()
+            else (
+                "return_policy"
+                if top.source_type == "policy" and "return" in top.title.casefold()
+                else "product_information"
+            )
+        )
+        return (
+            inferred_intent,
+            AnswerDraftResponse(
+                answer=f"Draft (synthetic demo data): {top.excerpt}",
+                intent=inferred_intent,
+                sources=[
+                    AnswerSourceResponse(
+                        source_type=top.source_type,
+                        source_id=top.source_id,
+                        title=top.title,
+                        excerpt=top.excerpt,
+                    )
+                ],
+                status="answered",
+                needs_human_review=False,
+                reason=None,
+                is_draft=True,
+            ),
+        )
+
+    return None
+
+
 def _process_comment(
     payload: LiveCommentPayload,
     *,
@@ -206,7 +389,7 @@ def _process_comment(
     needs_human_review = classification.needs_human_review
     reason = classification.reason
 
-    if author_type in {"viewer", "member"} and (
+    if author_type in {"viewer", "member", "owner", "moderator"} and (
         classification.intent in ANSWERABLE_INTENTS
         or "?" in payload.text
         or "？" in payload.text
@@ -251,6 +434,17 @@ def _process_comment(
                 is_draft=draft.is_draft,
             )
 
+    if (
+        answer_draft is None
+        and final_intent == "unknown"
+        and len(payload.text) <= MAX_CUSTOMER_MESSAGE_LENGTH
+    ):
+        fallback = _fallback_livestream_draft(payload.text)
+        if fallback is not None:
+            final_intent, answer_draft = fallback
+            needs_human_review = False
+            reason = None
+
     lead_score, lead_label = compute_lead_score(payload.text, final_intent)
 
     return ClassifiedLiveComment(
@@ -291,6 +485,10 @@ def create_app(
     db_settings = DatabaseSettings.from_env()
     mongo_manager = MongoDatabaseManager(db_settings.mongo)
     redis_manager = RedisManager(db_settings.redis)
+    live_orders: list[OrderDocument] = list(
+        load_demo_orders(store_id=store_id, session_id=session_id)
+    )
+    in_memory_stock_sold: dict[str, int] = {}
 
     def _upsert_recent_comment(item: ClassifiedLiveComment) -> None:
         for idx, existing in enumerate(recent_comments):
@@ -459,6 +657,7 @@ def create_app(
                     moderation_status="blocked" if doc.safety_blocked else "allowed",
                     moderation_reason=doc.safety_reason,
                     answer_draft=answer_draft,
+                    auto_order=mem_item.auto_order if mem_item else None,
                     thread_messages=list(thread),
                 )
             )
@@ -482,34 +681,41 @@ def create_app(
         app.state.db = None
         mongo_connected = False
         redis_connected = False
+        active_mongo: Any = mongo_manager
+        active_redis: Any = redis_manager
         try:
             await mongo_manager.connect()
             await initialize_database(mongo_manager.database)
             mongo_connected = True
         except DatabaseError as exc:
-            logger.warning("MongoDB unavailable, using in-memory mode: %s", exc)
+            logger.info("External MongoDB unavailable (%s); activating embedded livestream_sales_db engine.", exc)
+            active_mongo = EmbeddedMongoDatabaseManager(db_settings.mongo.database)
+            await active_mongo.connect()
+            await initialize_database(active_mongo.database)
 
         if mongo_connected:
             try:
                 await redis_manager.connect()
                 redis_connected = True
             except DatabaseError as exc:
-                logger.warning("Redis unavailable, continuing with MongoDB only: %s", exc)
+                logger.info("External Redis unavailable (%s); activating embedded Redis engine.", exc)
+                active_redis = EmbeddedRedisManager()
+                await active_redis.connect()
+        else:
+            active_redis = EmbeddedRedisManager()
+            await active_redis.connect()
 
-            try:
-                facade = StoreDatabaseFacade(
-                    mongo_manager,
-                    redis_manager if redis_connected else None,
-                )
-                await seed_demo_store_data(facade, tenant_ctx, session_id=session_id)
-                app.state.db = facade
-                existing = await _load_comments_from_repository(
-                    facade, limit=MAX_STORED_COMMENTS
-                )
-                for item in reversed(existing):
-                    _upsert_recent_comment(item)
-            except DatabaseError as exc:
-                logger.warning("Database session initialization failed, using in-memory mode: %s", exc)
+        try:
+            facade = StoreDatabaseFacade(active_mongo, active_redis)
+            await seed_demo_store_data(facade, tenant_ctx, session_id=session_id)
+            app.state.db = facade
+            existing = await _load_comments_from_repository(
+                facade, limit=MAX_STORED_COMMENTS
+            )
+            for item in reversed(existing):
+                _upsert_recent_comment(item)
+        except DatabaseError as exc:
+            logger.warning("Database session initialization failed, using in-memory mode: %s", exc)
 
         try:
             yield
@@ -596,6 +802,91 @@ def create_app(
             intent_model=intent_model,
             moderator=moderator,
         )
+        facade: StoreDatabaseFacade | None = getattr(app.state, "db", None)
+
+        order_candidate = (
+            _extract_order_candidate(payload.text)
+            if result.moderation_status == "allowed"
+            else None
+        )
+        if order_candidate is not None:
+            matched_prod, qty = order_candidate
+            order_id = _to_safe_id(f"ORD-LIVE-{len(live_orders) + 1:04d}")
+            sku_code = f"SKU-{matched_prod.id.replace('SYN-', '')}"
+            subtotal = round(float(matched_prod.price) * qty, 2)
+            shipping_fee = 0.0 if subtotal >= 30.0 else 4.99
+            total_amount = round(subtotal + shipping_fee, 2)
+            clean_handle = payload.sender.strip() or "@viewer"
+            clean_name = clean_handle.lstrip("@").strip() or "Livestream Buyer"
+
+            new_order = OrderDocument(
+                store_id=store_id,
+                order_id=order_id,
+                session_id=session_id,
+                customer_handle=clean_handle[:256],
+                customer_name=clean_name[:256],
+                platform="youtube",
+                status="confirmed",
+                payment_status="cod",
+                items=[
+                    OrderItemSnapshot(
+                        product_id=matched_prod.id,
+                        sku_code=sku_code,
+                        product_name=matched_prod.name,
+                        quantity=qty,
+                        unit_price=float(matched_prod.price),
+                        line_total=subtotal,
+                    )
+                ],
+                subtotal=subtotal,
+                shipping_fee=shipping_fee,
+                discount_amount=0.0,
+                total_amount=total_amount,
+                currency="USD",
+                shipping_address="Auto-captured from YouTube Live comment",
+                notes=f"Auto-order from comment ({result.comment_id}): {payload.text[:200]}",
+            )
+            live_orders.insert(0, new_order)
+            in_memory_stock_sold[matched_prod.id] = (
+                in_memory_stock_sold.get(matched_prod.id, 0) + qty
+            )
+            if facade is not None:
+                try:
+                    await facade.orders.upsert_order(tenant_ctx, new_order)
+                    await facade.products.adjust_inventory_quantity(
+                        tenant_ctx,
+                        product_id=matched_prod.id,
+                        delta_on_hand=-qty,
+                    )
+                except DatabaseError as exc:
+                    logger.warning("Failed to persist auto-order %s: %s", order_id, exc)
+
+            confirm_text = (
+                f"Order #{order_id} confirmed! {qty}x {matched_prod.name} "
+                f"(${subtotal:.2f} + ${shipping_fee:.2f} ship = ${total_amount:.2f})."
+            )
+            result.auto_order = new_order.model_dump(mode="json")
+            result.lead_score = 98
+            result.lead_label = "hot"
+            result.needs_human_review = False
+            result.reason = None
+            result.answer_draft = AnswerDraftResponse(
+                answer=confirm_text,
+                intent=result.intent,
+                sources=[
+                    AnswerSourceResponse(
+                        source_type="product",
+                        source_id=matched_prod.id,
+                        title=matched_prod.name,
+                        excerpt=matched_prod.description,
+                    )
+                ],
+                status="answered",
+                needs_human_review=False,
+                reason=None,
+                is_draft=True,
+            )
+
         thread = threads_by_comment.setdefault(result.comment_id, [])
         draft_ready = bool(
             result.answer_draft
@@ -615,15 +906,34 @@ def create_app(
         result.thread_messages = thread
         _upsert_recent_comment(result)
 
-        facade: StoreDatabaseFacade | None = getattr(app.state, "db", None)
         if facade is not None:
             try:
+                clean_handle = payload.sender.strip() or "@viewer"
+                clean_name = clean_handle.lstrip("@").strip() or "Viewer"
+                customer_id = _to_safe_id(f"cust-{clean_name.lower()}")
+                await facade.customers.upsert_customer_profile(
+                    tenant_ctx,
+                    CustomerDocument(
+                        store_id=store_id,
+                        customer_id=customer_id,
+                        platform="youtube",
+                        platform_user_handle=clean_handle[:256],
+                        display_name=clean_name[:200],
+                        tags=["livestream_viewer", *(["hot_lead"] if result.lead_label == "hot" else [])],
+                    ),
+                )
+                matched_prod_ids = [
+                    _to_safe_id(s.source_id)
+                    for s in (result.answer_draft.sources if result.answer_draft else [])
+                    if s.source_type == "product"
+                ]
                 persistence = await facade.record_comment_with_operational_sync(
                     tenant_ctx,
                     LivestreamCommentDocument(
                         store_id=store_id,
                         session_id=session_id,
                         comment_id=result.comment_id,
+                        customer_id=customer_id,
                         platform="youtube",
                         user_handle=result.sender[:256],
                         message=result.text[:1000],
@@ -632,6 +942,7 @@ def create_app(
                         intent_confidence=result.intent_confidence,
                         lead_label=result.lead_label,
                         lead_score=result.lead_score,
+                        matched_product_ids=matched_prod_ids,
                         safety_blocked=result.moderation_status == "blocked",
                         safety_reason=result.moderation_reason,
                     ),
@@ -639,13 +950,25 @@ def create_app(
                 if persistence.inserted_into_mongo and (
                     result.lead_label == "hot" or result.answer_draft is not None
                 ):
-                    await facade.sessions.increment_metrics(
+                    updated_sess = await facade.sessions.increment_metrics(
                         tenant_ctx,
                         session_id,
                         high_lead_comments=1 if result.lead_label == "hot" else 0,
                         drafts_generated=1 if result.answer_draft is not None else 0,
                         drafts_approved=0,
                     )
+                    if facade.cache is not None and updated_sess is not None:
+                        await facade.cache.cache_session(tenant_ctx, updated_sess)
+                        await facade.cache.publish_dashboard_notification(
+                            tenant_ctx,
+                            session_id,
+                            {
+                                "event": "comment.ingested",
+                                "comment_id": result.comment_id,
+                                "intent": result.intent,
+                                "lead_label": result.lead_label,
+                            },
+                        )
                 if (
                     persistence.inserted_into_mongo
                     and result.answer_draft
@@ -856,8 +1179,8 @@ def create_app(
                 "price": p.price,
                 "currency": "USD",
                 "description": p.description,
-                "stock_quantity": p.stock_quantity,
-                "in_stock": p.stock_quantity > 0,
+                "stock_quantity": max(0, p.stock_quantity - in_memory_stock_sold.get(p.id, 0)),
+                "in_stock": max(0, p.stock_quantity - in_memory_stock_sold.get(p.id, 0)) > 0,
                 "attributes": dict(p.attributes),
                 "storage_mode": "synthetic_memory",
             }
@@ -879,23 +1202,23 @@ def create_app(
                 return {
                     "count": len(orders),
                     "storage_mode": "mongodb",
-                    "items": [o.model_dump(mode="json") for o in orders],
+                    "items": [o.model_dump(mode="json") for o in reversed(orders)],
                 }
             except DatabaseError:
                 pass
 
-        demo_orders = load_demo_orders(store_id=store_id, session_id=session_id)
+        filtered_orders = list(live_orders)
         if status is not None:
-            demo_orders = [o for o in demo_orders if o.status == status]
+            filtered_orders = [o for o in filtered_orders if o.status == status]
         if customer_handle:
             handle_norm = customer_handle.strip().casefold()
-            demo_orders = [
-                o for o in demo_orders if o.customer_handle.casefold() == handle_norm
+            filtered_orders = [
+                o for o in filtered_orders if o.customer_handle.casefold() == handle_norm
             ]
         return {
-            "count": len(demo_orders),
+            "count": len(filtered_orders),
             "storage_mode": "synthetic_memory",
-            "items": [o.model_dump(mode="json") for o in demo_orders],
+            "items": [o.model_dump(mode="json") for o in filtered_orders],
         }
 
     @app.post("/api/store/seed")
@@ -914,6 +1237,92 @@ def create_app(
                 "faqs": len(dataset.faqs),
                 "policies": len(dataset.policies),
                 "orders": len(orders),
+            },
+        }
+
+    @app.get("/api/database/overview")
+    async def get_database_overview() -> dict[str, Any]:
+        """Return Section 3.2.4 Database Design overview (13 MongoDB collections + 7 Redis structures)."""
+        facade: StoreDatabaseFacade | None = getattr(app.state, "db", None)
+        collection_schemas: list[dict[str, Any]] = [
+            {"name": COLL_USERS, "model": "UserDocument", "fields": list(UserDocument.model_fields.keys())},
+            {"name": COLL_STORES, "model": "StoreDocument", "fields": list(StoreDocument.model_fields.keys())},
+            {"name": COLL_STORE_MEMBERSHIPS, "model": "StoreMembershipDocument", "fields": list(StoreMembershipDocument.model_fields.keys())},
+            {"name": COLL_PRODUCTS, "model": "ProductDocument", "fields": list(ProductDocument.model_fields.keys())},
+            {"name": COLL_PRODUCT_VARIANTS, "model": "ProductVariantDocument", "fields": list(ProductVariantDocument.model_fields.keys())},
+            {"name": COLL_INVENTORY, "model": "InventoryDocument", "fields": list(InventoryDocument.model_fields.keys())},
+            {"name": COLL_FAQS, "model": "FAQDocument", "fields": list(FAQDocument.model_fields.keys())},
+            {"name": COLL_SALES_POLICIES, "model": "SalesPolicyDocument", "fields": list(SalesPolicyDocument.model_fields.keys())},
+            {"name": COLL_CUSTOMERS, "model": "CustomerDocument", "fields": list(CustomerDocument.model_fields.keys())},
+            {"name": COLL_LIVESTREAM_SESSIONS, "model": "LivestreamSessionDocument", "fields": list(LivestreamSessionDocument.model_fields.keys())},
+            {"name": COLL_LIVESTREAM_COMMENTS, "model": "LivestreamCommentDocument", "fields": list(LivestreamCommentDocument.model_fields.keys())},
+            {"name": COLL_ANSWER_DRAFTS, "model": "AnswerDraftDocument", "fields": list(AnswerDraftDocument.model_fields.keys())},
+            {"name": COLL_ORDERS, "model": "OrderDocument", "fields": list(OrderDocument.model_fields.keys())},
+        ]
+        for entry in collection_schemas:
+            coll_name = entry["name"]
+            count_val = 0
+            if facade is not None:
+                try:
+                    count_val = int(await facade.mongo.database[coll_name].count_documents({}))
+                except Exception:
+                    count_val = 0
+            entry["document_count"] = count_val
+
+        redis_structures = [
+            {
+                "key_pattern": "store:{store_id}:session:{session_id}:state",
+                "concrete_key": RedisKeys.session_state(store_id, session_id),
+                "data_structure": "Hash",
+                "purpose": "Stores active livestream session state.",
+            },
+            {
+                "key_pattern": "store:{store_id}:session:{session_id}:comments",
+                "concrete_key": RedisKeys.session_comments(store_id, session_id),
+                "data_structure": "List",
+                "purpose": "Caches recent livestream comments.",
+            },
+            {
+                "key_pattern": "store:{store_id}:session:{session_id}:events",
+                "concrete_key": RedisKeys.session_events_stream(store_id, session_id),
+                "data_structure": "Stream",
+                "purpose": "Stores livestream event records.",
+            },
+            {
+                "key_pattern": "store:{store_id}:session:{session_id}:pubsub",
+                "concrete_key": RedisKeys.session_pubsub_channel(store_id, session_id),
+                "data_structure": "Pub/Sub",
+                "purpose": "Distributes dashboard notifications.",
+            },
+            {
+                "key_pattern": "store:{store_id}:session:{session_id}:dedupe:{event_id}",
+                "concrete_key": RedisKeys.session_dedupe(store_id, session_id, "sample-event"),
+                "data_structure": "String",
+                "purpose": "Prevents duplicate event processing.",
+            },
+            {
+                "key_pattern": "store:{store_id}:cache:product:{product_id}",
+                "concrete_key": RedisKeys.product_cache(store_id, "SYN-PROD-001"),
+                "data_structure": "String",
+                "purpose": "Caches product information.",
+            },
+            {
+                "key_pattern": "store:{store_id}:cache:session:{session_id}",
+                "concrete_key": RedisKeys.session_cache(store_id, session_id),
+                "data_structure": "String",
+                "purpose": "Caches livestream session information.",
+            },
+        ]
+
+        return {
+            "database_name": db_settings.mongo.database,
+            "total_collections": len(collection_schemas),
+            "collections": collection_schemas,
+            "total_redis_patterns": len(redis_structures),
+            "redis_structures": redis_structures,
+            "in_memory_runtime": {
+                "private_thread_conversations": len(threads_by_comment),
+                "recent_comments_buffer_size": len(recent_comments),
             },
         }
 

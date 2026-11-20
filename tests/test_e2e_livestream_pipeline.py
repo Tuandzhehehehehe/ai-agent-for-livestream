@@ -29,9 +29,17 @@ class LivestreamEndToEndTests(unittest.TestCase):
         self.assertEqual(ls["lost_comments"], 0)
         self.assertEqual(ls["duplicate_records_created"], 0)
 
+        self.assertEqual(db["database_name"], "livestream_sales_db")
+        self.assertEqual(db["total_mongodb_collections"], 13)
+        self.assertEqual(db["total_redis_key_patterns"], 7)
         self.assertEqual(db["storage_mode"], "mongodb")
         self.assertEqual(db["seeded_products_count"], 12)
         self.assertGreaterEqual(db["seeded_orders_count"], 1)
+        self.assertGreaterEqual(db["auto_orders_created_in_session"], 1)
+        self.assertEqual(
+            db["total_orders_after_session"],
+            db["seeded_orders_count"] + db["auto_orders_created_in_session"],
+        )
         self.assertEqual(db["thread_seller_action_recorded"], "edited")
         self.assertTrue(db["cold_start_repository_hydration_passed"])
 
@@ -109,6 +117,37 @@ class LivestreamEndToEndTests(unittest.TestCase):
             )
             assert updated_draft is not None
             self.assertEqual(updated_draft.seller_action, "approved")
+
+    def test_auto_order_creation_and_database_overview(self) -> None:
+        facade = build_repository_backed_facade()
+        ctx = TenantContext.system_context("default-store")
+        run_coroutine_sync(seed_demo_store_data(facade, ctx, session_id="youtube-live"))
+        app = create_app(db_facade=facade)
+
+        with InProcessAppClient(app) as client:
+            overview = client.get("/api/database/overview").json()
+            self.assertEqual(overview["database_name"], "livestream_sales_db")
+            self.assertEqual(overview["total_collections"], 13)
+            self.assertEqual(overview["total_redis_patterns"], 7)
+
+            buy_res = client.post(
+                "/api/plugin/comments",
+                json={
+                    "id": "auto-order-test-1",
+                    "sender": "@MizuGamingHub",
+                    "text": "buy 2 cloudstep canvas tote",
+                    "authorType": "viewer",
+                    "timestamp": 1791568900000,
+                },
+            )
+            self.assertEqual(buy_res.status_code, 200)
+            buy_body = buy_res.json()
+            self.assertIsNotNone(buy_body["auto_order"])
+            self.assertEqual(buy_body["auto_order"]["customer_handle"], "@MizuGamingHub")
+            self.assertEqual(buy_body["auto_order"]["items"][0]["product_id"], "SYN-PROD-004")
+            self.assertEqual(buy_body["auto_order"]["items"][0]["quantity"], 2)
+            self.assertEqual(buy_body["auto_order"]["total_amount"], 23.99)
+            self.assertEqual(buy_body["answer_draft"]["status"], "answered")
 
 
 if __name__ == "__main__":

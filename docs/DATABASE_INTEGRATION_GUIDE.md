@@ -16,14 +16,16 @@ backend/
                      # collection constants, $jsonSchema validators, compound indexes,
                      # initialize_database(), and database_lifespan()
     redis.py         # RedisSettings, DatabaseSettings, RedisManager, Redis errors
-    models.py        # TenantContext + 12 Pydantic v2 collection document models
+    models.py        # TenantContext + 13 Pydantic v2 collection document models
     contracts.py     # StoreDatabaseFacade and CommentPersistenceResult
+    embedded_engine.py # Local livestream_sales_db (13 collections) & Redis engine
+    seed.py          # Idempotent seeder for all collections and Redis data structures
   repositories/
     __init__.py      # Public repository exports
     base.py          # BaseRepository, BaseTenantRepository, compact_updates()
     tenant.py        # UserRepository, StoreRepository, MembershipRepository, CustomerRepository
     catalog.py       # ProductRepository (products, variants, inventory), FAQRepository, SalesPolicyRepository
-    livestream.py    # LivestreamRepository, CommentRepository, AnswerRepository
+    livestream.py    # LivestreamRepository, CommentRepository, AnswerRepository, OrderRepository
   infrastructure/
     __init__.py      # Public Redis operational infrastructure exports
     cache.py         # RedisKeys, TTL constants, TenantOperationalCache, execute_redis(), execute_pipeline()
@@ -58,24 +60,25 @@ backend/
 
 ---
 
-## 4. MongoDB Collections, Schemas & Indexes
+## 4. MongoDB Collections, Schemas & Indexes (`livestream_sales_db`)
 
-All 12 collections are initialized with strict `$jsonSchema` validators and compound indexes via [`initialize_database()`](../backend/database/mongodb.py). Every index on a tenant-owned collection is prefixed with `store_id`.
+All 13 collections in `livestream_sales_db` are initialized with strict `$jsonSchema` validators and compound indexes via [`initialize_database()`](../backend/database/mongodb.py). Every index on a tenant-owned collection is prefixed with `store_id`.
 
-| Collection | Document Model | Unique Indexes | Supporting Indexes |
-| :--- | :--- | :--- | :--- |
-| `users` | `UserDocument` | `(user_id)`, `(email)` | — |
-| `stores` | `StoreDocument` | `(store_id)`, `(store_id, slug)` | `(store_id, owner_user_id)` |
-| `store_memberships` | `StoreMembershipDocument` | `(store_id, membership_id)`, `(store_id, user_id)` | `(store_id, status, role)` |
-| `products` | `ProductDocument` | `(store_id, product_id)`, `(store_id, sku_code)` | `(store_id, is_active, category)` |
-| `product_variants` | `ProductVariantDocument` | `(store_id, variant_id)`, `(store_id, sku_code)` | `(store_id, product_id, is_active)` |
-| `inventory` | `InventoryDocument` | `(store_id, inventory_id)`, `(store_id, inventory_scope_key)`, partial `(store_id, product_id)` where `variant_id == null`, partial `(store_id, product_id, variant_id)` where `variant_id` is string | — |
-| `faqs` | `FAQDocument` | `(store_id, faq_id)` | `(store_id, is_active, topic)`, `(store_id, related_product_ids)` |
-| `sales_policies` | `SalesPolicyDocument` | `(store_id, policy_id, version)` | `(store_id, topic, is_active, version DESC)` |
-| `customers` | `CustomerDocument` | `(store_id, customer_id)`, `(store_id, platform, platform_user_handle)` | — |
-| `livestream_sessions` | `LivestreamSessionDocument` | `(store_id, session_id)` | `(store_id, status, started_at DESC)` |
-| `livestream_comments` | `LivestreamCommentDocument` | `(store_id, comment_id)` | `(store_id, session_id, timestamp DESC)`, `(store_id, session_id, lead_label)` |
-| `answer_drafts` | `AnswerDraftDocument` | `(store_id, draft_id)` | `(store_id, session_id, comment_id)`, `(store_id, session_id, seller_action, created_at DESC)` |
+| # | Collection | Document Model | Unique Indexes | Supporting Indexes |
+| :---: | :--- | :--- | :--- | :--- |
+| 1 | `users` | `UserDocument` | `(user_id)`, `(email)` | — |
+| 2 | `stores` | `StoreDocument` | `(store_id)`, `(store_id, slug)` | `(store_id, owner_user_id)` |
+| 3 | `store_memberships` | `StoreMembershipDocument` | `(store_id, membership_id)`, `(store_id, user_id)` | `(store_id, status, role)` |
+| 4 | `products` | `ProductDocument` | `(store_id, product_id)`, `(store_id, sku_code)` | `(store_id, is_active, category)` |
+| 5 | `product_variants` | `ProductVariantDocument` | `(store_id, variant_id)`, `(store_id, sku_code)` | `(store_id, product_id, is_active)` |
+| 6 | `inventory` | `InventoryDocument` | `(store_id, inventory_id)`, `(store_id, inventory_scope_key)`, partial `(store_id, product_id)` where `variant_id == null`, partial `(store_id, product_id, variant_id)` where `variant_id` is string | — |
+| 7 | `faqs` | `FAQDocument` | `(store_id, faq_id)` | `(store_id, is_active, topic)`, `(store_id, related_product_ids)` |
+| 8 | `sales_policies` | `SalesPolicyDocument` | `(store_id, policy_id, version)` | `(store_id, topic, is_active, version DESC)` |
+| 9 | `customers` | `CustomerDocument` | `(store_id, customer_id)`, `(store_id, platform, platform_user_handle)` | — |
+| 10 | `livestream_sessions` | `LivestreamSessionDocument` | `(store_id, session_id)` | `(store_id, status, started_at DESC)` |
+| 11 | `livestream_comments` | `LivestreamCommentDocument` | `(store_id, comment_id)` | `(store_id, session_id, timestamp DESC)`, `(store_id, session_id, lead_label)` |
+| 12 | `answer_drafts` | `AnswerDraftDocument` | `(store_id, draft_id)` | `(store_id, session_id, comment_id)`, `(store_id, session_id, seller_action, created_at DESC)` |
+| 13 | `orders` | `OrderDocument` | `(store_id, order_id)` | `(store_id, status, created_at DESC)`, `(store_id, customer_handle)` |
 
 ### Inventory Uniqueness Strategy
 Products may manage inventory at the base-product level (`variant_id=None`) or per variant (`variant_id="VAR-..."`).

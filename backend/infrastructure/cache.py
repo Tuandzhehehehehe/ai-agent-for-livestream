@@ -10,6 +10,7 @@ from redis.exceptions import RedisError
 
 from backend.database.models import (
     LivestreamCommentDocument,
+    LivestreamSessionDocument,
     ProductDocument,
     TenantContext,
 )
@@ -284,6 +285,46 @@ class TenantOperationalCache:
         ctx.require_write_permission()
         key = RedisKeys.product_cache(ctx.store_id, product_id)
         await execute_redis("invalidate_product_cache", self._redis.delete(key))
+
+    async def cache_session(
+        self,
+        ctx: TenantContext,
+        session: LivestreamSessionDocument | dict[str, Any],
+        *,
+        ttl_seconds: int = TTL_SESSION_CACHE_SECONDS,
+    ) -> None:
+        ctx.require_write_permission()
+        payload = (
+            session.model_dump(mode="json")
+            if isinstance(session, LivestreamSessionDocument)
+            else session
+        )
+        session_id = str(payload["session_id"])
+        key = RedisKeys.session_cache(ctx.store_id, session_id)
+        await execute_redis(
+            "cache_session",
+            self._redis.set(key, json.dumps(payload, separators=(",", ":")), ex=ttl_seconds),
+        )
+
+    async def get_cached_session(
+        self,
+        ctx: TenantContext,
+        session_id: str,
+    ) -> dict[str, Any] | None:
+        key = RedisKeys.session_cache(ctx.store_id, session_id)
+        raw = await execute_redis("get_cached_session", self._redis.get(key))
+        if raw is None:
+            return None
+        return json.loads(raw)
+
+    async def invalidate_session_cache(
+        self,
+        ctx: TenantContext,
+        session_id: str,
+    ) -> None:
+        ctx.require_write_permission()
+        key = RedisKeys.session_cache(ctx.store_id, session_id)
+        await execute_redis("invalidate_session_cache", self._redis.delete(key))
 
     async def publish_dashboard_notification(
         self,

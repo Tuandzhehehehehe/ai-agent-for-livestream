@@ -4,6 +4,10 @@ from backend.database.contracts import (
     CommentPersistenceResult,
     StoreDatabaseFacade,
 )
+from backend.database.embedded_engine import (
+    EmbeddedMongoDatabaseManager,
+    EmbeddedRedisManager,
+)
 from backend.database.models import (
     WRITE_CAPABLE_ROLES,
     AnswerDraftDocument,
@@ -106,6 +110,8 @@ __all__ = [
     "DocumentNotFoundError",
     "DraftActionStatus",
     "DuplicateDocumentError",
+    "EmbeddedMongoDatabaseManager",
+    "EmbeddedRedisManager",
     "EvidenceSourceSnapshot",
     "EvidenceSourceType",
     "FAQDocument",

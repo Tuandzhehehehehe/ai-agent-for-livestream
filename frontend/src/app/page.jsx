@@ -249,6 +249,11 @@ export default function LivestreamDashboardPage() {
                 <strong>{c.sender}</strong>
                 <span>
                   Intent: <code>{c.intent}</code> | Lead: <strong>{c.lead_label}</strong> ({c.lead_score})
+                  {c.auto_order && (
+                    <span style={{ marginLeft: 8, padding: '2px 8px', borderRadius: 999, background: 'rgba(16,185,129,0.2)', color: '#6ee7b7', fontWeight: 600 }}>
+                      Order #{c.auto_order.order_id} (${Number(c.auto_order.total_amount).toFixed(2)})
+                    </span>
+                  )}
                 </span>
               </div>
               <div style={{ marginTop: 6 }}>{c.text}</div>

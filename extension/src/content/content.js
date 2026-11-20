@@ -8,6 +8,8 @@
 
   const seenIds = new Set();
   const aiMessages = new Map();
+  const sentAiTexts = new Set();
+  const autoRepliedIds = new Set();
 
   let isEnabled = false;
   let chatObserver = null;
@@ -21,6 +23,93 @@
   let chatRaf = null;
   let playerRaf = null;
   let playerBtn = null;
+
+  function formatPublicChatReply(sender, rawAnswer) {
+    const handle = String(sender || '').replace(/^@+/, '').trim();
+    const cleaned = String(rawAnswer || '')
+      .replace(/^Draft\s*\([^)]*\)\s*:\s*/i, '')
+      .replace(/\s*This is a fictional demo price\.?/gi, '')
+      .replace(/\s*This is not live inventory\.?/gi, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (!cleaned) return '';
+    const prefix = handle ? `🤖 @${handle} ` : '🤖 ';
+    const full = `${prefix}${cleaned}`;
+    return full.length > 195 ? `${full.slice(0, 192)}...` : full;
+  }
+
+  function sendToYouTubeLiveChat(messageText) {
+    const text = String(messageText || '').trim();
+    if (!text) return false;
+
+    let chatDoc = document;
+    if (!document.querySelector('yt-live-chat-message-input-renderer')) {
+      try {
+        const frame = document.querySelector('iframe#chatframe, ytd-live-chat-frame iframe');
+        if (frame?.contentDocument) {
+          chatDoc = frame.contentDocument;
+        }
+      } catch (_) {}
+    }
+
+    const inputRenderer = chatDoc.querySelector('yt-live-chat-message-input-renderer');
+    const inputEl =
+      inputRenderer?.querySelector(
+        'yt-live-chat-text-input-field-renderer #input[contenteditable], #input[contenteditable]'
+      ) ||
+      chatDoc.querySelector('yt-live-chat-text-input-field-renderer #input[contenteditable]');
+
+    if (!inputEl) return false;
+
+    sentAiTexts.add(text);
+
+    inputEl.focus();
+    inputEl.textContent = '';
+    try {
+      chatDoc.execCommand('selectAll', false, null);
+      chatDoc.execCommand('insertText', false, text);
+    } catch (_) {}
+
+    if (!inputEl.textContent || !inputEl.textContent.trim()) {
+      inputEl.textContent = text;
+    }
+
+    inputEl.dispatchEvent(
+      new InputEvent('input', {
+        bubbles: true,
+        cancelable: true,
+        data: text,
+        inputType: 'insertText'
+      })
+    );
+    inputEl.dispatchEvent(new Event('change', { bubbles: true }));
+
+    setTimeout(() => {
+      const sendButton =
+        inputRenderer?.querySelector(
+          '#send-button button, yt-button-renderer#send-button button, yt-icon-button#button button'
+        ) ||
+        chatDoc.querySelector('yt-live-chat-message-input-renderer #send-button button');
+
+      if (sendButton && !sendButton.disabled) {
+        sendButton.click();
+        return;
+      }
+
+      inputEl.dispatchEvent(
+        new KeyboardEvent('keydown', {
+          key: 'Enter',
+          code: 'Enter',
+          keyCode: 13,
+          which: 13,
+          bubbles: true,
+          cancelable: true
+        })
+      );
+    }, 100);
+
+    return true;
+  }
 
   // Safely communicate with the extension runtime.
   function sendRuntimeMessage(message, callback) {
@@ -211,6 +300,16 @@
       )
     );
 
+    if (record.auto_order?.order_id) {
+      badges.appendChild(
+        el(
+          'span',
+          'livestream-ai-popover-badge is-answered',
+          `Order #${record.auto_order.order_id}`
+        )
+      );
+    }
+
     if (record.needs_human_review) {
       badges.appendChild(
         el('span', 'livestream-ai-popover-badge is-review', 'Needs Review')
@@ -327,6 +426,7 @@
             : [...(current.thread_messages || []), payload];
 
           aiMessages.set(record.comment_id, current);
+          sendToYouTubeLiveChat(formatPublicChatReply(record.sender, payload.text));
           if (selectedId === record.comment_id && popover && !popover.hidden) {
             const liveThreadList = popover.querySelector(
               '.livestream-ai-thread-list'
@@ -431,6 +531,7 @@
     const text = node.querySelector('#message')?.innerText?.trim();
 
     if (!sender || !text) return;
+    if (text.startsWith('🤖') || sentAiTexts.has(text)) return;
 
     const rawId = node.id || `${sender}-${text}-${Date.now()}`;
     const id = rawId.replace(/[^A-Za-z0-9._@-]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 128) || `c_${Date.now()}`;
@@ -483,6 +584,18 @@
 
         aiMessages.set(cid, record);
         upsertChip(record);
+
+        if (
+          !autoRepliedIds.has(cid) &&
+          record.answer_draft?.status === 'answered' &&
+          !record.needs_human_review &&
+          !record.answer_draft?.needs_human_review &&
+          record.answer_draft?.answer
+        ) {
+          autoRepliedIds.add(cid);
+          const chatReply = formatPublicChatReply(sender, record.answer_draft.answer);
+          sendToYouTubeLiveChat(chatReply);
+        }
 
         if (selectedId === cid && popover && !popover.hidden) {
           openPopover(record);

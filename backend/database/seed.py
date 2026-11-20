@@ -18,11 +18,13 @@ from backend.database.models import (
     OrderDocument,
     OrderItemSnapshot,
     ProductDocument,
+    ProductVariantDocument,
     SalesPolicyDocument,
     StoreDocument,
     StoreMembershipDocument,
     TenantContext,
     UserDocument,
+    utc_now,
 )
 from backend.database.mongodb import (
     DuplicateDocumentError,
@@ -91,11 +93,16 @@ async def seed_demo_store_data(
     store_id = tenant_ctx.store_id
     dataset = load_synthetic_data()
     counts = {
+        "users": 0,
+        "stores": 0,
+        "store_memberships": 0,
         "products": 0,
+        "product_variants": 0,
         "inventory": 0,
         "faqs": 0,
         "policies": 0,
         "customers": 0,
+        "livestream_sessions": 0,
         "orders": 0,
     }
 
@@ -113,6 +120,7 @@ async def seed_demo_store_data(
             )
         except DuplicateDocumentError:
             pass
+    counts["users"] += 1
 
     if await facade.stores.get_by_store_id(store_id) is None:
         try:
@@ -124,10 +132,14 @@ async def seed_demo_store_data(
                     owner_user_id=owner_id,
                     status="active",
                     default_currency="USD",
+                    timezone="Asia/Ho_Chi_Minh",
+                    platform_handles={"youtube": "@LivestreamAIDemoStore"},
+                    settings={"auto_draft_enabled": True, "auto_order_enabled": True},
                 )
             )
         except DuplicateDocumentError:
             pass
+    counts["stores"] += 1
 
     if await facade.memberships.get_membership(store_id, owner_id) is None:
         try:
@@ -138,31 +150,38 @@ async def seed_demo_store_data(
                     user_id=owner_id,
                     role="owner",
                     status="active",
+                    invited_by_user_id=owner_id,
                 )
             )
         except DuplicateDocumentError:
             pass
+    counts["store_memberships"] += 1
 
-    # 2. Products & Inventory
+    # 2. Products, Product Variants & Inventory
+    seeded_product_docs: list[ProductDocument] = []
     for product in dataset.products:
         sku = f"SKU-{product.id.replace('SYN-', '')}"
+        has_color_variant = "color" in product.attributes
+        prod_doc = ProductDocument(
+            store_id=store_id,
+            product_id=product.id,
+            sku_code=sku,
+            name=product.name,
+            category=product.category,
+            subcategory=f"{product.category}-livestream",
+            price=product.price,
+            currency="USD",
+            short_description=product.description,
+            key_benefits=[f"Featured in {product.category} livestream flash sale"],
+            common_questions=[f"What is the price of {product.name}?"],
+            attributes=dict(product.attributes),
+            has_variants=has_color_variant,
+            is_active=True,
+        )
         existing_prod = await facade.products.get_by_id(tenant_ctx, product.id)
         if existing_prod is None:
-            await facade.products.create_in_tenant(
-                tenant_ctx,
-                ProductDocument(
-                    store_id=store_id,
-                    product_id=product.id,
-                    sku_code=sku,
-                    name=product.name,
-                    category=product.category,
-                    price=product.price,
-                    currency="USD",
-                    short_description=product.description,
-                    attributes=dict(product.attributes),
-                    is_active=True,
-                ),
-            )
+            await facade.products.create_in_tenant(tenant_ctx, prod_doc)
+        seeded_product_docs.append(prod_doc)
         counts["products"] += 1
 
         await facade.products.upsert_inventory(
@@ -179,6 +198,30 @@ async def seed_demo_store_data(
         )
         counts["inventory"] += 1
 
+        if has_color_variant:
+            color_val = str(product.attributes["color"])
+            variant_id = f"VAR-{product.id}-01"
+            if await facade.products.get_variant_by_id(tenant_ctx, variant_id) is None:
+                try:
+                    await facade.products.create_variant(
+                        tenant_ctx,
+                        ProductVariantDocument(
+                            store_id=store_id,
+                            variant_id=variant_id,
+                            product_id=product.id,
+                            sku_code=f"{sku}-V1",
+                            title=f"{product.name} ({color_val.title()})",
+                            price=product.price,
+                            currency="USD",
+                            options={"color": color_val},
+                            attributes=dict(product.attributes),
+                            is_active=True,
+                        ),
+                    )
+                except DuplicateDocumentError:
+                    pass
+            counts["product_variants"] += 1
+
     # 3. FAQs
     for faq in dataset.faqs:
         if await facade.faqs.get_by_id(tenant_ctx, faq.id) is None:
@@ -191,6 +234,7 @@ async def seed_demo_store_data(
                     answer=faq.answer,
                     topic=faq.category,
                     related_product_ids=list(faq.product_ids),
+                    keywords=[faq.category, *list(faq.product_ids)],
                     is_active=True,
                 ),
             )
@@ -216,6 +260,7 @@ async def seed_demo_store_data(
                     title=f"{policy.category.title()} Policy",
                     summary=policy.content[:240],
                     details=policy.content,
+                    conditions=[f"Applies to active {policy.category.lower()} requests"],
                     is_active=True,
                 ),
                 supersede_previous_topic_versions=False,
@@ -223,8 +268,9 @@ async def seed_demo_store_data(
         counts["policies"] += 1
 
     # 5. Active Livestream Session
-    if await facade.sessions.get_by_id(tenant_ctx, session_id) is None:
-        await facade.sessions.create_session(
+    session_doc = await facade.sessions.get_by_id(tenant_ctx, session_id)
+    if session_doc is None:
+        session_doc = await facade.sessions.create_session(
             tenant_ctx,
             LivestreamSessionDocument(
                 store_id=store_id,
@@ -232,10 +278,13 @@ async def seed_demo_store_data(
                 title="YouTube Live Flash Sale Demo",
                 platform="youtube",
                 status="live",
+                host_user_id=owner_id,
                 pinned_product_ids=[p.id for p in dataset.products[:4]],
                 active_promotion_notes="Free shipping on livestream creator bundles.",
+                started_at=utc_now(),
             ),
         )
+    counts["livestream_sessions"] += 1
 
     # 6. Customers & Orders
     orders = load_demo_orders(store_id=store_id, session_id=session_id)
@@ -250,11 +299,50 @@ async def seed_demo_store_data(
                     platform_user_handle=order.customer_handle,
                     display_name=order.customer_name,
                     tags=["livestream_buyer"],
+                    notes=f"Seeded buyer for order {order.order_id}",
                 ),
             )
             counts["customers"] += 1
         await facade.orders.upsert_order(tenant_ctx, order)
         counts["orders"] += 1
+
+    # 7. Populate Redis Data Structures (Section 3.2.4.2) when Redis is attached
+    if facade.cache is not None and session_doc is not None:
+        try:
+            await facade.cache.set_session_state(
+                tenant_ctx,
+                session_id,
+                {
+                    "status": session_doc.status,
+                    "title": session_doc.title,
+                    "platform": session_doc.platform,
+                    "host_user_id": session_doc.host_user_id or owner_id,
+                    "pinned_product_ids": session_doc.pinned_product_ids,
+                },
+            )
+            await facade.cache.cache_session(tenant_ctx, session_doc)
+            for prod_doc in seeded_product_docs:
+                await facade.cache.cache_product(tenant_ctx, prod_doc)
+            await facade.cache.publish_dashboard_notification(
+                tenant_ctx,
+                session_id,
+                {"event": "session.seeded", "products": counts["products"]},
+            )
+        except Exception as exc:
+            logger.debug("Redis cache seed skipped: %s", exc)
+
+    if facade.streams is not None:
+        try:
+            await facade.streams.publish_event(
+                tenant_ctx,
+                session_id,
+                event_id=f"seed-{session_id}",
+                event_type="session.started",
+                payload={"session_id": session_id, "status": "live"},
+                deduplicate=True,
+            )
+        except Exception as exc:
+            logger.debug("Redis stream seed skipped: %s", exc)
 
     logger.info("Seeded demo store '%s': %s", store_id, counts)
     return counts

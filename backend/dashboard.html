@@ -41,6 +41,7 @@
       const [comments, setComments] = useState([]);
       const [products, setProducts] = useState([]);
       const [orders, setOrders] = useState([]);
+      const [dbOverview, setDbOverview] = useState(null);
       const [question, setQuestion] = useState('What is the price and stock of the Aurora Studio Ringlight?');
       const [agentOutput, setAgentOutput] = useState(null);
       const [ragQuery, setRagQuery] = useState('Aurora Studio Ringlight wireless microphone');
@@ -48,13 +49,14 @@
 
       const refresh = async () => {
         try {
-          const [h, a, s, c, p, o] = await Promise.all([
+          const [h, a, s, c, p, o, db] = await Promise.all([
             fetch('/health').then(r => r.json()),
             fetch('/api/agent/architecture').then(r => r.json()),
             fetch('/api/plugin/summary').then(r => r.json()),
             fetch('/api/plugin/comments?limit=20').then(r => r.json()),
             fetch('/api/store/products').then(r => r.json()),
             fetch('/api/store/orders').then(r => r.json()),
+            fetch('/api/database/overview').then(r => r.json()),
           ]);
           setHealth(h);
           setArch(a);
@@ -62,6 +64,7 @@
           setComments(c);
           setProducts(p.items || []);
           setOrders(o.items || []);
+          setDbOverview(db);
         } catch (_) {}
       };
 
@@ -199,6 +202,40 @@
             )
           )
         ),
+        dbOverview && e('div', { className: 'grid-2' },
+          e('div', { className: 'card' },
+            e('h3', { style: { marginTop: 0, color: '#ddd6fe' } },
+              `MongoDB: ${dbOverview.database_name} (${dbOverview.total_collections} Collections)`
+            ),
+            e('div', { style: { maxHeight: 240, overflowY: 'auto' } },
+              (dbOverview.collections || []).map((col, idx) =>
+                e('div', { key: col.name, style: { padding: '6px 10px', background: '#0f172a', borderRadius: 6, marginTop: 5, fontSize: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
+                  e('div', null,
+                    e('strong', { style: { color: '#c4b5fd' } }, `${idx + 1}. ${col.name}`),
+                    e('span', { style: { color: '#94a3b8', marginLeft: 8 } }, `(${col.model})`)
+                  ),
+                  e('span', { className: 'badge hot' }, `${col.document_count} docs`)
+                )
+              )
+            )
+          ),
+          e('div', { className: 'card' },
+            e('h3', { style: { marginTop: 0, color: '#ddd6fe' } },
+              `Redis Infrastructure (${dbOverview.total_redis_patterns} Key Patterns)`
+            ),
+            e('div', { style: { maxHeight: 240, overflowY: 'auto' } },
+              (dbOverview.redis_structures || []).map((rs) =>
+                e('div', { key: rs.key_pattern, style: { padding: '6px 10px', background: '#0f172a', borderRadius: 6, marginTop: 5, fontSize: 12 } },
+                  e('div', { style: { display: 'flex', justifyContent: 'space-between' } },
+                    e('code', { style: { color: '#93c5fd' } }, rs.key_pattern),
+                    e('span', { className: 'badge warm' }, rs.data_structure)
+                  ),
+                  e('div', { style: { color: '#94a3b8', marginTop: 2, fontSize: 11 } }, rs.purpose)
+                )
+              )
+            )
+          )
+        ),
         e('div', { className: 'card' },
           e('h3', { style: { marginTop: 0, color: '#ddd6fe' } }, 'Live YouTube Comments Stream'),
           comments.map(c =>
@@ -208,6 +245,7 @@
                 e('div', { style: { display: 'flex', gap: 6 } },
                   e('span', { className: 'badge' }, c.intent),
                   e('span', { className: `badge ${c.lead_label}` }, `Lead: ${c.lead_label} (${c.lead_score})`),
+                  c.auto_order && e('span', { className: 'badge hot' }, `Order #${c.auto_order.order_id} ($${Number(c.auto_order.total_amount).toFixed(2)})`),
                   c.needs_human_review && e('span', { className: 'badge review' }, 'Needs Review')
                 )
               ),

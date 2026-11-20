@@ -22,6 +22,10 @@ from pymongo.errors import DuplicateKeyError
 
 from backend.chat_safety import ViewerRateLimiter
 from backend.database.contracts import StoreDatabaseFacade
+from backend.database.embedded_engine import (
+    EmbeddedMongoDatabaseManager,
+    EmbeddedRedisManager,
+)
 from backend.database.models import TenantContext
 from backend.database.mongodb import (
     COLL_ANSWER_DRAFTS,
@@ -430,8 +434,9 @@ class InMemoryMongoManagerStub:
 
 
 def build_repository_backed_facade() -> StoreDatabaseFacade:
-    mongo_stub = InMemoryMongoManagerStub()
-    return StoreDatabaseFacade(mongo_stub, None)  # type: ignore[arg-type]
+    mongo_stub = EmbeddedMongoDatabaseManager("livestream_sales_db")
+    redis_stub = EmbeddedRedisManager()
+    return StoreDatabaseFacade(mongo_stub, redis_stub)  # type: ignore[arg-type]
 
 
 def _generate_livestream_comment_templates() -> list[tuple[str, str]]:
@@ -587,6 +592,20 @@ def run_e2e_verification(
         assert dashboard_res.status_code == 200
         assert "Livestream Sales Multi-Agent & RAG Console" in dashboard_res.text
 
+        db_overview_res = client.get("/api/database/overview")
+        assert db_overview_res.status_code == 200
+        db_overview_data = db_overview_res.json()
+        assert db_overview_data["database_name"] == "livestream_sales_db"
+        assert db_overview_data["total_collections"] == 13
+        assert db_overview_data["total_redis_patterns"] == 7
+
+        final_orders_res = client.get("/api/store/orders")
+        assert final_orders_res.status_code == 200
+        final_orders_data = final_orders_res.json()
+        auto_orders_created = sum(1 for c in listed_comments if c.get("auto_order") is not None)
+        assert auto_orders_created >= 1
+        assert final_orders_data["count"] >= orders_data["count"] + auto_orders_created
+
     # Verify Cold-Start Read from Repository (new app instance sharing the same database facade)
     cold_app = create_app(db_facade=facade)
     with InProcessAppClient(cold_app) as cold_client:
@@ -663,9 +682,14 @@ def run_e2e_verification(
             },
         },
         "database_repository_verification": {
+            "database_name": db_overview_data["database_name"],
+            "total_mongodb_collections": db_overview_data["total_collections"],
+            "total_redis_key_patterns": db_overview_data["total_redis_patterns"],
             "storage_mode": summary_data["storage_mode"],
             "seeded_products_count": products_data["count"],
             "seeded_orders_count": orders_data["count"],
+            "auto_orders_created_in_session": auto_orders_created,
+            "total_orders_after_session": final_orders_data["count"],
             "session_metrics": session_doc.metrics_summary.model_dump(),
             "thread_seller_action_recorded": updated_draft.seller_action,
             "cold_start_repository_hydration_passed": True,
@@ -729,13 +753,18 @@ def write_e2e_verification_reports(
         f"| Độ trễ xử lý trung bình (`Mean latency`) | {ls['latency_ms']['mean']} ms |",
         f"| Độ trễ phân vị `p50 / p95 / p99` | {ls['latency_ms']['p50']} ms / {ls['latency_ms']['p95']} ms / {ls['latency_ms']['p99']} ms |",
         "",
-        "## 2. Xác minh đọc/ghi Database Repository (`StoreDatabaseFacade`)",
+        "## 2. Xác minh Database Design (`livestream_sales_db` - 13 Collections & 7 Redis Key Patterns)",
         "",
         "| Hạng mục | Kết quả |",
         "| --- | --- |",
+        f"| Tên cơ sở dữ liệu MongoDB (`database_name`) | `{db['database_name']}` |",
+        f"| Số lượng MongoDB Collections (`total_mongodb_collections`) | `{db['total_mongodb_collections']} / 13` |",
+        f"| Số lượng mẫu khóa Redis (`total_redis_key_patterns`) | `{db['total_redis_key_patterns']} / 7` |",
         f"| Chế độ lưu trữ (`storage_mode`) | `{db['storage_mode']}` |",
         f"| Danh mục sản phẩm đọc từ Repository (`GET /api/store/products`) | `{db['seeded_products_count']}` sản phẩm |",
-        f"| Đơn hàng livestream đọc từ Repository (`GET /api/store/orders`) | `{db['seeded_orders_count']}` đơn hàng |",
+        f"| Đơn hàng khởi tạo ban đầu (`seeded_orders_count`) | `{db['seeded_orders_count']}` đơn hàng |",
+        f"| Đơn hàng tự động lên đơn từ bình luận (`auto_orders_created_in_session`) | `{db['auto_orders_created_in_session']}` đơn hàng |",
+        f"| Tổng số đơn hàng lưu trong Repository sau phiên (`GET /api/store/orders`) | `{db['total_orders_after_session']}` đơn hàng |",
         f"| Session metrics (`total_comments / drafts_generated / drafts_approved`) | `{db['session_metrics']['total_comments']} / {db['session_metrics']['drafts_generated']} / {db['session_metrics']['drafts_approved']}` |",
         f"| Cập nhật trạng thái duyệt nháp qua thread (`record_seller_action`) | `{db['thread_seller_action_recorded']}` |",
         f"| Đồng bộ dữ liệu từ Repository khi khởi động lại (`Cold-Start Hydration`) | `{db['cold_start_repository_hydration_passed']}` |",
