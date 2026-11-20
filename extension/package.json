@@ -1,14 +1,26 @@
 {
-  "name": "youtube-live-ai-collector",
-  "version": "1.0.0",
+  "name": "youtube-live-ai-assistant-react",
+  "version": "2.0.0",
   "type": "module",
-  "description": "Chrome Extension thu thap binh luan livestream YouTube thoi gian thuc ve AI Backend",
+  "description": "React Chrome Extension for YouTube Live AI Auto-Reply, Auto-Order & Operator Console",
+  "scripts": {
+    "dev": "vite build --watch",
+    "build": "vite build"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.1",
+    "vite": "^5.4.0"
+  },
   "keywords": [
-    "youtube",
+    "react",
+    "youtube-live",
     "livestream",
     "chrome-extension",
-    "comment-collector"
+    "ai-agent"
   ],
-  "author": "",
   "license": "ISC"
 }

@@ -11,6 +11,7 @@ export default function LivestreamDashboardPage() {
   const [comments, setComments] = useState([]);
   const [products, setProducts] = useState([]);
   const [orders, setOrders] = useState([]);
+  const [dbOverview, setDbOverview] = useState(null);
   const [agentInput, setAgentInput] = useState('What is the price and stock of the Aurora Studio Ringlight?');
   const [agentResult, setAgentResult] = useState(null);
   const [ragQuery, setRagQuery] = useState('Aurora Studio Ringlight wireless microphone');
@@ -19,13 +20,14 @@ export default function LivestreamDashboardPage() {
 
   const fetchOverview = async () => {
     try {
-      const [hRes, aRes, sRes, cRes, pRes, oRes] = await Promise.all([
+      const [hRes, aRes, sRes, cRes, pRes, oRes, dbRes] = await Promise.all([
         fetch(`${API_BASE}/health`),
         fetch(`${API_BASE}/api/agent/architecture`),
         fetch(`${API_BASE}/api/plugin/summary`),
         fetch(`${API_BASE}/api/plugin/comments?limit=25`),
         fetch(`${API_BASE}/api/store/products`),
         fetch(`${API_BASE}/api/store/orders`),
+        fetch(`${API_BASE}/api/database/overview`),
       ]);
       if (hRes.ok) setHealth(await hRes.json());
       if (aRes.ok) setArchitecture(await aRes.json());
@@ -33,6 +35,7 @@ export default function LivestreamDashboardPage() {
       if (cRes.ok) setComments(await cRes.json());
       if (pRes.ok) setProducts((await pRes.json()).items || []);
       if (oRes.ok) setOrders((await oRes.json()).items || []);
+      if (dbRes.ok) setDbOverview(await dbRes.json());
     } catch (_) {
       // Backend offline or unreachable
     }
@@ -238,6 +241,43 @@ export default function LivestreamDashboardPage() {
           </div>
         </section>
       </div>
+
+      {dbOverview && (
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, marginBottom: 24 }}>
+          <section style={{ background: '#1e293b', padding: 20, borderRadius: 12, border: '1px solid #334155' }}>
+            <h2 style={{ marginTop: 0, fontSize: 18, color: '#ddd6fe' }}>
+              MongoDB: {dbOverview.database_name} ({dbOverview.total_collections} Collections)
+            </h2>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 240, overflowY: 'auto' }}>
+              {(dbOverview.collections || []).map((col, idx) => (
+                <div key={col.name} style={{ padding: '6px 10px', borderRadius: 6, background: '#0f172a', display: 'flex', justifyContent: 'space-between', fontSize: 12 }}>
+                  <span>
+                    <strong style={{ color: '#c4b5fd' }}>{idx + 1}. {col.name}</strong> ({col.model})
+                  </span>
+                  <span style={{ color: '#34d399', fontWeight: 600 }}>{col.document_count} docs</span>
+                </div>
+              ))}
+            </div>
+          </section>
+
+          <section style={{ background: '#1e293b', padding: 20, borderRadius: 12, border: '1px solid #334155' }}>
+            <h2 style={{ marginTop: 0, fontSize: 18, color: '#ddd6fe' }}>
+              Redis Infrastructure ({dbOverview.total_redis_patterns} Key Patterns)
+            </h2>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 240, overflowY: 'auto' }}>
+              {(dbOverview.redis_structures || []).map((rs) => (
+                <div key={rs.key_pattern} style={{ padding: '6px 10px', borderRadius: 6, background: '#0f172a', fontSize: 12 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <code style={{ color: '#93c5fd' }}>{rs.key_pattern}</code>
+                    <span style={{ color: '#fcd34d', fontWeight: 600 }}>{rs.data_structure}</span>
+                  </div>
+                  <div style={{ color: '#94a3b8', fontSize: 11, marginTop: 2 }}>{rs.purpose}</div>
+                </div>
+              ))}
+            </div>
+          </section>
+        </div>
+      )}
 
       <section style={{ background: '#1e293b', padding: 20, borderRadius: 12, border: '1px solid #334155' }}>
         <h2 style={{ marginTop: 0, fontSize: 18, color: '#ddd6fe' }}>Real-Time Livestream Comments Feed</h2>

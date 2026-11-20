@@ -1,16 +1,20 @@
-
 {
   "manifest_version": 3,
-  "name": "YouTube Live Comment Collector",
-  "version": "1.0.1",
-  "description": "Thu thap binh luan livestream YouTube theo thoi gian thuc ve AI Backend.",
+  "name": "YouTube Live AI Assistant (React)",
+  "version": "2.0.0",
+  "description": "React Chrome Extension thu thap binh luan, tu dong tra loi & len don hang YouTube Live ve AI Backend.",
   "permissions": [
-    "storage"
+    "storage",
+    "tabs"
   ],
   "host_permissions": [
     "https://*.youtube.com/*",
     "http://127.0.0.1:8000/*"
   ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Livestream AI Assistant (React)"
+  },
   "background": {
     "service_worker": "src/background/service_worker.js",
     "type": "module"

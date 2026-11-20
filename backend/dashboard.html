@@ -3,9 +3,10 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Livestream AI Multi-Agent & RAG Dashboard</title>
+  <title>Livestream AI Multi-Agent & RAG Console (React 18)</title>
   <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
   <style>
     * { box-sizing: border-box; }
     body {
@@ -30,9 +31,104 @@
 </head>
 <body>
   <div id="root"></div>
-  <script>
-    const e = React.createElement;
+  <script type="text/babel">
     const { useState, useEffect } = React;
+
+    function HeaderBar({ health }) {
+      return (
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+          <div>
+            <h1 style={{ margin: 0, fontSize: 24, color: '#c4b5fd' }}>
+              Livestream Sales Multi-Agent & RAG Console
+            </h1>
+            <p style={{ margin: '4px 0 0', color: '#94a3b8', fontSize: 13 }}>
+              React 18 JSX • Orchestrator: {health?.orchestrator_backend || 'stategraph'} • Vector RAG: {health?.vector_rag_backend || 'local_vector'} • Ollama: {health?.ollama_enabled ? 'enabled' : 'fallback mode'}
+            </p>
+          </div>
+          <span className="badge hot">
+            Mongo: {health?.mongo_status || 'n/a'} | Redis: {health?.redis_status || 'n/a'}
+          </span>
+        </div>
+      );
+    }
+
+    function KpiStatsRow({ summary, ordersCount }) {
+      return (
+        <div className="grid-4">
+          <div className="card">
+            <div style={{ fontSize: 12, color: '#94a3b8' }}>Total Comments</div>
+            <div style={{ fontSize: 28, fontWeight: 700 }}>{summary?.comment_count ?? 0}</div>
+          </div>
+          <div className="card">
+            <div style={{ fontSize: 12, color: '#94a3b8' }}>Hot Buyer Leads</div>
+            <div style={{ fontSize: 28, fontWeight: 700, color: '#34d399' }}>{summary?.hot_lead_count ?? 0}</div>
+          </div>
+          <div className="card">
+            <div style={{ fontSize: 12, color: '#94a3b8' }}>Needs Human Review</div>
+            <div style={{ fontSize: 28, fontWeight: 700, color: '#fbbf24' }}>{summary?.needs_human_review_count ?? 0}</div>
+          </div>
+          <div className="card">
+            <div style={{ fontSize: 12, color: '#94a3b8' }}>Livestream Orders (Auto + Demo)</div>
+            <div style={{ fontSize: 28, fontWeight: 700, color: '#a78bfa' }}>{ordersCount}</div>
+          </div>
+        </div>
+      );
+    }
+
+    function DatabaseDesignPanel({ dbOverview }) {
+      if (!dbOverview) return null;
+      return (
+        <div className="grid-2">
+          <div className="card">
+            <h3 style={{ marginTop: 0, color: '#ddd6fe' }}>
+              MongoDB: {dbOverview.database_name} ({dbOverview.total_collections} Collections)
+            </h3>
+            <div style={{ maxHeight: 240, overflowY: 'auto' }}>
+              {(dbOverview.collections || []).map((col, idx) => (
+                <div
+                  key={col.name}
+                  style={{
+                    padding: '6px 10px',
+                    background: '#0f172a',
+                    borderRadius: 6,
+                    marginTop: 5,
+                    fontSize: 12,
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                  }}
+                >
+                  <div>
+                    <strong style={{ color: '#c4b5fd' }}>{idx + 1}. {col.name}</strong>
+                    <span style={{ color: '#94a3b8', marginLeft: 8 }}>({col.model})</span>
+                  </div>
+                  <span className="badge hot">{col.document_count} docs</span>
+                </div>
+              ))}
+            </div>
+          </div>
+          <div className="card">
+            <h3 style={{ marginTop: 0, color: '#ddd6fe' }}>
+              Redis Infrastructure ({dbOverview.total_redis_patterns} Key Patterns)
+            </h3>
+            <div style={{ maxHeight: 240, overflowY: 'auto' }}>
+              {(dbOverview.redis_structures || []).map((rs) => (
+                <div
+                  key={rs.key_pattern}
+                  style={{ padding: '6px 10px', background: '#0f172a', borderRadius: 6, marginTop: 5, fontSize: 12 }}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <code style={{ color: '#93c5fd' }}>{rs.key_pattern}</code>
+                    <span className="badge warm">{rs.data_structure}</span>
+                  </div>
+                  <div style={{ color: '#94a3b8', marginTop: 2, fontSize: 11 }}>{rs.purpose}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      );
+    }
 
     function DashboardApp() {
       const [health, setHealth] = useState(null);
@@ -50,13 +146,13 @@
       const refresh = async () => {
         try {
           const [h, a, s, c, p, o, db] = await Promise.all([
-            fetch('/health').then(r => r.json()),
-            fetch('/api/agent/architecture').then(r => r.json()),
-            fetch('/api/plugin/summary').then(r => r.json()),
-            fetch('/api/plugin/comments?limit=20').then(r => r.json()),
-            fetch('/api/store/products').then(r => r.json()),
-            fetch('/api/store/orders').then(r => r.json()),
-            fetch('/api/database/overview').then(r => r.json()),
+            fetch('/health').then((r) => r.json()),
+            fetch('/api/agent/architecture').then((r) => r.json()),
+            fetch('/api/plugin/summary').then((r) => r.json()),
+            fetch('/api/plugin/comments?limit=20').then((r) => r.json()),
+            fetch('/api/store/products').then((r) => r.json()),
+            fetch('/api/store/orders').then((r) => r.json()),
+            fetch('/api/database/overview').then((r) => r.json()),
           ]);
           setHealth(h);
           setArch(a);
@@ -99,172 +195,172 @@
         }
       };
 
-      return e('div', { className: 'container' },
-        e('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 } },
-          e('div', null,
-            e('h1', { style: { margin: 0, fontSize: 24, color: '#c4b5fd' } }, 'Livestream Sales Multi-Agent & RAG Console'),
-            e('p', { style: { margin: '4px 0 0', color: '#94a3b8', fontSize: 13 } },
-              `Orchestrator: ${health?.orchestrator_backend || 'stategraph'} • Vector RAG: ${health?.vector_rag_backend || 'local_vector'} • Ollama: ${health?.ollama_enabled ? 'enabled' : 'fallback mode'}`
-            )
-          ),
-          e('span', { className: 'badge' }, `Mongo: ${health?.mongo_status || 'n/a'} | Redis: ${health?.redis_status || 'n/a'}`)
-        ),
-        e('div', { className: 'grid-4' },
-          e('div', { className: 'card' }, e('div', { style: { fontSize: 12, color: '#94a3b8' } }, 'Total Comments'), e('div', { style: { fontSize: 28, fontWeight: 700 } }, summary?.comment_count ?? 0)),
-          e('div', { className: 'card' }, e('div', { style: { fontSize: 12, color: '#94a3b8' } }, 'Hot Buyer Leads'), e('div', { style: { fontSize: 28, fontWeight: 700, color: '#34d399' } }, summary?.hot_lead_count ?? 0)),
-          e('div', { className: 'card' }, e('div', { style: { fontSize: 12, color: '#94a3b8' } }, 'Needs Human Review'), e('div', { style: { fontSize: 28, fontWeight: 700, color: '#fbbf24' } }, summary?.needs_human_review_count ?? 0)),
-          e('div', { className: 'card' }, e('div', { style: { fontSize: 12, color: '#94a3b8' } }, 'Blocked by Safety Guard'), e('div', { style: { fontSize: 28, fontWeight: 700, color: '#f87171' } }, summary?.moderated_comment_count ?? 0))
-        ),
-        e('div', { className: 'grid-2' },
-          e('div', { className: 'card' },
-            e('h3', { style: { marginTop: 0, color: '#ddd6fe' } }, 'Multi-Agent + Tool Calling Playground'),
-            e('form', { onSubmit: runAgent, style: { display: 'flex', gap: 8, marginBottom: 12 } },
-              e('input', { value: question, onChange: ev => setQuestion(ev.target.value) }),
-              e('button', { type: 'submit' }, 'Run Agents')
-            ),
-            agentOutput?.state && e('div', { style: { fontSize: 13 } },
-              e('div', { style: { padding: 10, borderRadius: 8, background: '#0f172a', marginBottom: 8 } },
-                e('strong', null, 'Draft Reply: '), agentOutput.state.answer_draft?.answer,
-                e('div', { style: { marginTop: 6, color: '#a78bfa', fontSize: 12 } },
-                  `Intent: ${agentOutput.state.intent} | Lead: ${agentOutput.state.lead_label} (${agentOutput.state.lead_score}/100) | Tool: ${agentOutput.state.selected_tool || 'none'}`
-                )
-              ),
-              (agentOutput.state.agent_trace || []).map((st, idx) =>
-                e('div', { key: idx, style: { padding: '6px 8px', background: '#0f172a', borderRadius: 6, marginTop: 4 } },
-                  e('strong', { style: { color: '#c4b5fd' } }, st.agent), `: ${st.detail}`
-                )
-              )
-            )
-          ),
-          e('div', { className: 'card' },
-            e('h3', { style: { marginTop: 0, color: '#ddd6fe' } }, 'Vector RAG Semantic Search'),
-            e('form', { onSubmit: runRag, style: { display: 'flex', gap: 8, marginBottom: 12 } },
-              e('input', { value: ragQuery, onChange: ev => setRagQuery(ev.target.value) }),
-              e('button', { type: 'submit', className: 'secondary' }, 'Search RAG')
-            ),
-            ragHits.map((h, idx) =>
-              e('div', { key: idx, style: { padding: 10, background: '#0f172a', borderRadius: 8, marginTop: 8, fontSize: 13 } },
-                e('div', { style: { display: 'flex', justifyContent: 'space-between', color: '#93c5fd', fontWeight: 600 } },
-                  e('span', null, `[${h.source_type}] ${h.title} (${h.source_id})`),
-                  e('span', null, `score: ${h.score}`)
-                ),
-                e('div', { style: { marginTop: 4, color: '#cbd5e1' } }, h.excerpt)
-              )
-            )
-          )
-        ),
-        e('div', { className: 'card', style: { marginBottom: 20 } },
-          e('h3', { style: { marginTop: 0, color: '#ddd6fe' } }, 'Multi-Agent System Pipeline'),
-          e('div', { className: 'grid-5' },
-            (arch?.agents || []).map(ag =>
-              e('div', { key: ag.id, style: { padding: 12, background: '#0f172a', borderRadius: 8, border: '1px solid #475569' } },
-                e('div', { style: { fontWeight: 600, color: '#c4b5fd', fontSize: 13 } }, ag.name),
-                e('div', { style: { marginTop: 6, fontSize: 12, color: '#94a3b8' } }, ag.role)
-              )
-            )
-          )
-        ),
-        e('div', { className: 'grid-2' },
-          e('div', { className: 'card' },
-            e('h3', { style: { marginTop: 0, color: '#ddd6fe' } }, `Catalog Products & Inventory (${products.length})`),
-            e('div', { style: { maxHeight: 280, overflowY: 'auto' } },
-              products.map(p =>
-                e('div', { key: p.product_id, style: { padding: '8px 10px', background: '#0f172a', borderRadius: 8, marginTop: 6, fontSize: 13, display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
-                  e('div', null,
-                    e('strong', { style: { color: '#f8fafc' } }, p.name),
-                    e('div', { style: { fontSize: 11, color: '#94a3b8' } }, `${p.product_id} • ${p.category}`)
-                  ),
-                  e('div', { style: { textAlign: 'right' } },
-                    e('div', { style: { fontWeight: 700, color: '#a78bfa' } }, `$${Number(p.price).toFixed(2)}`),
-                    e('span', { className: `badge ${p.stock_quantity > 0 ? 'hot' : 'review'}` }, `Stock: ${p.stock_quantity}`)
-                  )
-                )
-              )
-            )
-          ),
-          e('div', { className: 'card' },
-            e('h3', { style: { marginTop: 0, color: '#ddd6fe' } }, `Livestream Customer Orders (${orders.length})`),
-            e('div', { style: { maxHeight: 280, overflowY: 'auto' } },
-              orders.map(o =>
-                e('div', { key: o.order_id, style: { padding: '8px 10px', background: '#0f172a', borderRadius: 8, marginTop: 6, fontSize: 13 } },
-                  e('div', { style: { display: 'flex', justifyContent: 'space-between' } },
-                    e('strong', { style: { color: '#93c5fd' } }, `${o.order_id} • ${o.customer_name} (${o.customer_handle})`),
-                    e('span', { className: `badge ${o.status === 'delivered' || o.status === 'shipped' ? 'hot' : o.status === 'refund_requested' ? 'review' : 'warm'}` }, `${o.status} / ${o.payment_status}`)
-                  ),
-                  e('div', { style: { fontSize: 12, color: '#cbd5e1', marginTop: 4 } },
-                    (o.items || []).map(it => `${it.product_name} x${it.quantity}`).join(', ')
-                  ),
-                  e('div', { style: { fontSize: 11, color: '#94a3b8', marginTop: 3 } },
-                    `Total: $${Number(o.total_amount).toFixed(2)} • ${o.shipping_address}`
-                  )
-                )
-              )
-            )
-          )
-        ),
-        dbOverview && e('div', { className: 'grid-2' },
-          e('div', { className: 'card' },
-            e('h3', { style: { marginTop: 0, color: '#ddd6fe' } },
-              `MongoDB: ${dbOverview.database_name} (${dbOverview.total_collections} Collections)`
-            ),
-            e('div', { style: { maxHeight: 240, overflowY: 'auto' } },
-              (dbOverview.collections || []).map((col, idx) =>
-                e('div', { key: col.name, style: { padding: '6px 10px', background: '#0f172a', borderRadius: 6, marginTop: 5, fontSize: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
-                  e('div', null,
-                    e('strong', { style: { color: '#c4b5fd' } }, `${idx + 1}. ${col.name}`),
-                    e('span', { style: { color: '#94a3b8', marginLeft: 8 } }, `(${col.model})`)
-                  ),
-                  e('span', { className: 'badge hot' }, `${col.document_count} docs`)
-                )
-              )
-            )
-          ),
-          e('div', { className: 'card' },
-            e('h3', { style: { marginTop: 0, color: '#ddd6fe' } },
-              `Redis Infrastructure (${dbOverview.total_redis_patterns} Key Patterns)`
-            ),
-            e('div', { style: { maxHeight: 240, overflowY: 'auto' } },
-              (dbOverview.redis_structures || []).map((rs) =>
-                e('div', { key: rs.key_pattern, style: { padding: '6px 10px', background: '#0f172a', borderRadius: 6, marginTop: 5, fontSize: 12 } },
-                  e('div', { style: { display: 'flex', justifyContent: 'space-between' } },
-                    e('code', { style: { color: '#93c5fd' } }, rs.key_pattern),
-                    e('span', { className: 'badge warm' }, rs.data_structure)
-                  ),
-                  e('div', { style: { color: '#94a3b8', marginTop: 2, fontSize: 11 } }, rs.purpose)
-                )
-              )
-            )
-          )
-        ),
-        e('div', { className: 'card' },
-          e('h3', { style: { marginTop: 0, color: '#ddd6fe' } }, 'Live YouTube Comments Stream'),
-          comments.map(c =>
-            e('div', { key: c.comment_id, style: { padding: 12, background: '#0f172a', borderRadius: 8, marginTop: 8 } },
-              e('div', { style: { display: 'flex', justifyContent: 'space-between', fontSize: 13 } },
-                e('strong', null, c.sender),
-                e('div', { style: { display: 'flex', gap: 6 } },
-                  e('span', { className: 'badge' }, c.intent),
-                  e('span', { className: `badge ${c.lead_label}` }, `Lead: ${c.lead_label} (${c.lead_score})`),
-                  c.auto_order && e('span', { className: 'badge hot' }, `Order #${c.auto_order.order_id} ($${Number(c.auto_order.total_amount).toFixed(2)})`),
-                  c.needs_human_review && e('span', { className: 'badge review' }, 'Needs Review')
-                )
-              ),
-              e('div', { style: { marginTop: 6 } }, c.text),
-              (c.thread_messages || []).map((m, idx) =>
-                e('div', { key: idx, style: { marginTop: 8, padding: 8, borderRadius: 6, background: '#1e1b4b', color: '#ddd6fe', fontSize: 13 } },
-                  e('strong', { style: { color: '#6ee7b7' } }, `${m.sender}: `), m.text
-                )
-              ),
-              (!c.thread_messages || !c.thread_messages.length) && c.answer_draft?.answer && e('div', { style: { marginTop: 8, padding: 8, borderRadius: 6, background: '#334155', color: '#fcd34d', fontSize: 13 } },
-                e('strong', null, 'Pending Operator Review: '), c.answer_draft.answer
-              )
-            )
-          )
-        )
+      return (
+        <div className="container">
+          <HeaderBar health={health} />
+          <KpiStatsRow summary={summary} ordersCount={orders.length} />
+
+          <div className="grid-2">
+            <div className="card">
+              <h3 style={{ marginTop: 0, color: '#ddd6fe' }}>Multi-Agent + Tool Calling Playground</h3>
+              <form onSubmit={runAgent} style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+                <input value={question} onChange={(ev) => setQuestion(ev.target.value)} />
+                <button type="submit">Run Agents</button>
+              </form>
+              {agentOutput?.state && (
+                <div style={{ fontSize: 13 }}>
+                  <div style={{ padding: 10, borderRadius: 8, background: '#0f172a', marginBottom: 8 }}>
+                    <strong>Draft Reply: </strong>
+                    {agentOutput.state.answer_draft?.answer}
+                    <div style={{ marginTop: 6, color: '#a78bfa', fontSize: 12 }}>
+                      Intent: {agentOutput.state.intent} | Lead: {agentOutput.state.lead_label} ({agentOutput.state.lead_score}/100) | Tool: {agentOutput.state.selected_tool || 'none'}
+                    </div>
+                  </div>
+                  {(agentOutput.state.agent_trace || []).map((st, idx) => (
+                    <div key={idx} style={{ padding: '6px 8px', background: '#0f172a', borderRadius: 6, marginTop: 4 }}>
+                      <strong style={{ color: '#c4b5fd' }}>{st.agent}</strong>: {st.detail}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="card">
+              <h3 style={{ marginTop: 0, color: '#ddd6fe' }}>Vector RAG Semantic Search</h3>
+              <form onSubmit={runRag} style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+                <input value={ragQuery} onChange={(ev) => setRagQuery(ev.target.value)} />
+                <button type="submit" className="secondary">Search RAG</button>
+              </form>
+              {ragHits.map((h, idx) => (
+                <div key={idx} style={{ padding: 10, background: '#0f172a', borderRadius: 8, marginTop: 8, fontSize: 13 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', color: '#93c5fd', fontWeight: 600 }}>
+                    <span>[{h.source_type}] {h.title} ({h.source_id})</span>
+                    <span>score: {h.score}</span>
+                  </div>
+                  <div style={{ marginTop: 4, color: '#cbd5e1' }}>{h.excerpt}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="card" style={{ marginBottom: 20 }}>
+            <h3 style={{ marginTop: 0, color: '#ddd6fe' }}>Multi-Agent System Pipeline</h3>
+            <div className="grid-5">
+              {(arch?.agents || []).map((ag) => (
+                <div key={ag.id} style={{ padding: 12, background: '#0f172a', borderRadius: 8, border: '1px solid #475569' }}>
+                  <div style={{ fontWeight: 600, color: '#c4b5fd', fontSize: 13 }}>{ag.name}</div>
+                  <div style={{ marginTop: 6, fontSize: 12, color: '#94a3b8' }}>{ag.role}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="grid-2">
+            <div className="card">
+              <h3 style={{ marginTop: 0, color: '#ddd6fe' }}>Catalog Products & Inventory ({products.length})</h3>
+              <div style={{ maxHeight: 280, overflowY: 'auto' }}>
+                {products.map((p) => (
+                  <div
+                    key={p.product_id}
+                    style={{
+                      padding: '8px 10px',
+                      background: '#0f172a',
+                      borderRadius: 8,
+                      marginTop: 6,
+                      fontSize: 13,
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                    }}
+                  >
+                    <div>
+                      <strong style={{ color: '#f8fafc' }}>{p.name}</strong>
+                      <div style={{ fontSize: 11, color: '#94a3b8' }}>{p.product_id} • {p.category}</div>
+                    </div>
+                    <div style={{ textAlign: 'right' }}>
+                      <div style={{ fontWeight: 700, color: '#a78bfa' }}>${Number(p.price).toFixed(2)}</div>
+                      <span className={`badge ${p.stock_quantity > 0 ? 'hot' : 'review'}`}>
+                        Stock: {p.stock_quantity}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="card">
+              <h3 style={{ marginTop: 0, color: '#ddd6fe' }}>Livestream Customer Orders ({orders.length})</h3>
+              <div style={{ maxHeight: 280, overflowY: 'auto' }}>
+                {orders.map((o) => (
+                  <div key={o.order_id} style={{ padding: '8px 10px', background: '#0f172a', borderRadius: 8, marginTop: 6, fontSize: 13 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                      <strong style={{ color: '#93c5fd' }}>
+                        {o.order_id} • {o.customer_name} ({o.customer_handle})
+                      </strong>
+                      <span
+                        className={`badge ${
+                          o.status === 'delivered' || o.status === 'shipped'
+                            ? 'hot'
+                            : o.status === 'refund_requested'
+                            ? 'review'
+                            : 'warm'
+                        }`}
+                      >
+                        {o.status} / {o.payment_status}
+                      </span>
+                    </div>
+                    <div style={{ fontSize: 12, color: '#cbd5e1', marginTop: 4 }}>
+                      {(o.items || []).map((it) => `${it.product_name} x${it.quantity}`).join(', ')}
+                    </div>
+                    <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 3 }}>
+                      Total: ${Number(o.total_amount).toFixed(2)} • {o.shipping_address}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          <DatabaseDesignPanel dbOverview={dbOverview} />
+
+          <div className="card">
+            <h3 style={{ marginTop: 0, color: '#ddd6fe' }}>Live YouTube Comments Stream</h3>
+            {comments.map((c) => (
+              <div key={c.comment_id} style={{ padding: 12, background: '#0f172a', borderRadius: 8, marginTop: 8 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
+                  <strong>{c.sender}</strong>
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    <span className="badge">{c.intent}</span>
+                    <span className={`badge ${c.lead_label}`}>Lead: {c.lead_label} ({c.lead_score})</span>
+                    {c.auto_order && (
+                      <span className="badge hot">
+                        Order #{c.auto_order.order_id} (${Number(c.auto_order.total_amount).toFixed(2)})
+                      </span>
+                    )}
+                    {c.needs_human_review && <span className="badge review">Needs Review</span>}
+                  </div>
+                </div>
+                <div style={{ marginTop: 6 }}>{c.text}</div>
+                {(c.thread_messages || []).map((m, idx) => (
+                  <div key={idx} style={{ marginTop: 8, padding: 8, borderRadius: 6, background: '#1e1b4b', color: '#ddd6fe', fontSize: 13 }}>
+                    <strong style={{ color: '#6ee7b7' }}>{m.sender}: </strong>
+                    {m.text}
+                  </div>
+                ))}
+                {(!c.thread_messages || !c.thread_messages.length) && c.answer_draft?.answer && (
+                  <div style={{ marginTop: 8, padding: 8, borderRadius: 6, background: '#334155', color: '#fcd34d', fontSize: 13 }}>
+                    <strong>Pending Operator Review: </strong>
+                    {c.answer_draft.answer}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
       );
     }
 
-    ReactDOM.createRoot(document.getElementById('root')).render(e(DashboardApp));
+    ReactDOM.createRoot(document.getElementById('root')).render(<DashboardApp />);
   </script>
 </body>
 </html>
