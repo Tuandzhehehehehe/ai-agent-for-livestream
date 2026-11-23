@@ -13,8 +13,8 @@ Báo cáo kiểm thử tự động xác minh luồng thu thập bình luận li
 | Số bình luận khôi phục khi khởi động lại (`Cold-Start Repository Read`) | 300 |
 | Số bình luận bị mất (`Lost comments`) | **0** |
 | Số bản ghi bị nhân đôi (`Duplicate records`) | **0** |
-| Độ trễ xử lý trung bình (`Mean latency`) | 3.65 ms |
-| Độ trễ phân vị `p50 / p95 / p99` | 3.51 ms / 8.53 ms / 10.97 ms |
+| Độ trễ xử lý trung bình (`Mean latency`) | 6.05 ms |
+| Độ trễ phân vị `p50 / p95 / p99` | 5.64 ms / 11.69 ms / 14.78 ms |
 
 ## 2. Xác minh Database Design (`livestream_sales_db` - 13 Collections & 7 Redis Key Patterns)
 
@@ -26,8 +26,8 @@ Báo cáo kiểm thử tự động xác minh luồng thu thập bình luận li
 | Chế độ lưu trữ (`storage_mode`) | `mongodb` |
 | Danh mục sản phẩm đọc từ Repository (`GET /api/store/products`) | `12` sản phẩm |
 | Đơn hàng khởi tạo ban đầu (`seeded_orders_count`) | `6` đơn hàng |
-| Đơn hàng tự động lên đơn từ bình luận (`auto_orders_created_in_session`) | `18` đơn hàng |
-| Tổng số đơn hàng lưu trong Repository sau phiên (`GET /api/store/orders`) | `24` đơn hàng |
+| Đơn hàng tự động lên đơn từ bình luận (`auto_orders_created_in_session`) | `9` đơn hàng |
+| Tổng số đơn hàng lưu trong Repository sau phiên (`GET /api/store/orders`) | `15` đơn hàng |
 | Session metrics (`total_comments / drafts_generated / drafts_approved`) | `300 / 218 / 1` |
 | Cập nhật trạng thái duyệt nháp qua thread (`record_seller_action`) | `edited` |
 | Đồng bộ dữ liệu từ Repository khi khởi động lại (`Cold-Start Hydration`) | `True` |
@@ -37,7 +37,7 @@ Báo cáo kiểm thử tự động xác minh luồng thu thập bình luận li
 - **Kiểm thử Burst Rate Limit (6 bình luận liên tiếp từ 1 viewer):** `[200, 200, 200, 200, 200, 429]` (5 bình luận đầu `200 OK`, bình luận thứ 6 bị chặn `429 Too Many Requests`).
 - **Số bình luận vi phạm bị chặn (`moderation_status=blocked`):** `12`
 - **Số bình luận chuyển người vận hành (`needs_human_review`):** `136`
-- **Số khách hàng tiềm năng cao (`hot_lead_count`):** `108`
+- **Số khách hàng tiềm năng cao (`hot_lead_count`):** `99`
 
 ## 4. Kiểm chứng Multi-Agent, Vector RAG & Nhãn giao diện Extension
 

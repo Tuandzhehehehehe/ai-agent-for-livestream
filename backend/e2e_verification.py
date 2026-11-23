@@ -614,6 +614,10 @@ def run_e2e_verification(
         assert cold_summary["storage_mode"] == "mongodb"
         assert cold_summary["comment_count"] == long_session_comment_count
         assert len(cold_list) == long_session_comment_count
+        cold_auto_orders = sum(1 for c in cold_list if c.get("auto_order") is not None)
+        assert cold_auto_orders == auto_orders_created, (
+            f"Expected cold-start comments to preserve {auto_orders_created} auto_orders, got {cold_auto_orders}"
+        )
 
     updated_draft = run_coroutine_sync(
         facade.answer_drafts.get_latest_for_comment(ctx, "live-c-0001")
@@ -654,8 +658,14 @@ def run_e2e_verification(
     content_js = content_js_path.read_text(encoding="utf-8")
     auto_replied_occurrences = len(re.findall(r"Auto Replied", content_js))
     draft_ready_occurrences = len(re.findall(r"Draft Ready", content_js))
+    exec_command_occurrences = len(re.findall(r"execCommand", content_js))
+    has_auto_reply_toggle = "isAutoReplyEnabled" in content_js and 'data-toggle="auto-reply"' in content_js
+    has_chat_send_queue = "chatSendQueue" in content_js and "isProcessingChatQueue" in content_js
     assert auto_replied_occurrences == 0, "Extension must not contain misleading 'Auto Replied' badge"
     assert draft_ready_occurrences >= 1, "Extension must display 'Draft Ready' badge for answered drafts"
+    assert exec_command_occurrences == 0, "Extension must not use deprecated document.execCommand"
+    assert has_auto_reply_toggle, "Extension must provide an explicit Auto-Reply toggle (off by default)"
+    assert has_chat_send_queue, "Extension must queue and serialize YouTube Live chat replies"
 
     sorted_lat = sorted(latencies_ms)
     p50_ms = sorted_lat[int(0.50 * (len(sorted_lat) - 1))]
@@ -711,6 +721,9 @@ def run_e2e_verification(
         "extension_ui_contract": {
             "auto_replied_badge_occurrences": auto_replied_occurrences,
             "draft_ready_badge_occurrences": draft_ready_occurrences,
+            "deprecated_exec_command_occurrences": exec_command_occurrences,
+            "auto_reply_toggle_default_off": has_auto_reply_toggle,
+            "chat_send_queue_enabled": has_chat_send_queue,
             "all_answers_marked_is_draft": True,
             "youtube_chat_write_actions": 0,
         },

@@ -1,8 +1,8 @@
-
 const BACKEND_URL = 'http://127.0.0.1:8000/api/plugin/comments';
 const DASHBOARD_URL = 'http://127.0.0.1:8000/dashboard';
 
 const stateKey = (tabId) => `enabled_tab_${tabId}`;
+const autoReplyKey = (tabId) => `auto_reply_tab_${tabId}`;
 
 async function postJson(url, payload) {
   const response = await fetch(url, {
@@ -19,7 +19,7 @@ async function postJson(url, payload) {
 }
 
 chrome.tabs.onRemoved.addListener((tabId) => {
-  chrome.storage.session.remove(stateKey(tabId)).catch(() => {});
+  chrome.storage.session.remove([stateKey(tabId), autoReplyKey(tabId)]).catch(() => {});
 });
 
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
@@ -41,9 +41,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           type: 'AI_STATE_CHANGED',
           enabled
         });
-      } catch (_) {
-        // Some frames may not contain the content script.
-      }
+      } catch (_) {}
 
       sendResponse({ success: true, enabled });
     }).catch((error) => {
@@ -53,20 +51,47 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     return true;
   }
 
-  if (request.type === 'GET_ENABLED') {
+  if (request.type === 'SET_AUTO_REPLY') {
     if (typeof tabId !== 'number') {
-      sendResponse({ enabled: false });
+      sendResponse({ success: false, error: 'Missing tab ID' });
       return false;
     }
 
-    chrome.storage.session.get(stateKey(tabId))
+    const autoReply = Boolean(request.autoReply);
+
+    chrome.storage.session.set({
+      [autoReplyKey(tabId)]: autoReply
+    }).then(async () => {
+      try {
+        await chrome.tabs.sendMessage(tabId, {
+          type: 'AI_AUTO_REPLY_CHANGED',
+          autoReply
+        });
+      } catch (_) {}
+
+      sendResponse({ success: true, autoReply });
+    }).catch((error) => {
+      sendResponse({ success: false, error: error.message });
+    });
+
+    return true;
+  }
+
+  if (request.type === 'GET_ENABLED') {
+    if (typeof tabId !== 'number') {
+      sendResponse({ enabled: false, autoReply: false });
+      return false;
+    }
+
+    chrome.storage.session.get([stateKey(tabId), autoReplyKey(tabId)])
       .then((result) => {
         sendResponse({
-          enabled: Boolean(result[stateKey(tabId)])
+          enabled: Boolean(result[stateKey(tabId)]),
+          autoReply: Boolean(result[autoReplyKey(tabId)])
         });
       })
       .catch(() => {
-        sendResponse({ enabled: false });
+        sendResponse({ enabled: false, autoReply: false });
       });
 
     return true;

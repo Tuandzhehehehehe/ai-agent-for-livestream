@@ -1,5 +1,5 @@
 {
-  "verified_at": "2026-11-20T11:25:30.791777+00:00",
+  "verified_at": "2026-11-23T05:55:22.578491+00:00",
   "long_session_stability": {
     "submitted_unique_comments": 300,
     "duplicate_retransmissions_sent": 25,
@@ -10,11 +10,11 @@
     "duplicate_records_created": 0,
     "http_200_count": 300,
     "latency_ms": {
-      "mean": 3.65,
-      "p50": 3.51,
-      "p95": 8.53,
-      "p99": 10.97,
-      "max": 12.11
+      "mean": 6.05,
+      "p50": 5.64,
+      "p95": 11.69,
+      "p99": 14.78,
+      "max": 18.18
     }
   },
   "database_repository_verification": {
@@ -24,11 +24,11 @@
     "storage_mode": "mongodb",
     "seeded_products_count": 12,
     "seeded_orders_count": 6,
-    "auto_orders_created_in_session": 18,
-    "total_orders_after_session": 24,
+    "auto_orders_created_in_session": 9,
+    "total_orders_after_session": 15,
     "session_metrics": {
       "total_comments": 300,
-      "high_lead_comments": 108,
+      "high_lead_comments": 99,
       "drafts_generated": 218,
       "drafts_approved": 1
     },
@@ -46,10 +46,10 @@
     ],
     "blocked_comments_count": 12,
     "needs_human_review_count": 136,
-    "hot_lead_count": 108,
+    "hot_lead_count": 99,
     "intent_counts": {
       "complaint": 17,
-      "consequential_action": 18,
+      "consequential_action": 9,
       "price_question": 36,
       "product_information": 36,
       "promotion_question": 18,
@@ -58,7 +58,7 @@
       "return_policy": 37,
       "shipping_policy": 37,
       "spam_or_irrelevant": 12,
-      "stock_question": 36,
+      "stock_question": 45,
       "unknown": 18
     }
   },
@@ -72,6 +72,9 @@
   "extension_ui_contract": {
     "auto_replied_badge_occurrences": 0,
     "draft_ready_badge_occurrences": 1,
+    "deprecated_exec_command_occurrences": 0,
+    "auto_reply_toggle_default_off": true,
+    "chat_send_queue_enabled": true,
     "all_answers_marked_is_draft": true,
     "youtube_chat_write_actions": 0
   }

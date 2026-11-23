@@ -2,17 +2,18 @@
 
 Hệ thống AI Agent, RAG và Data cho đồ án tốt nghiệp **“Xây dựng AI Agent hỗ trợ phiên livestream bán hàng”**. Repository bao gồm:
 - **Gói `ai`**: Multi-Agent StateGraph Orchestrator (`ai.multi_agent`), Hybrid Vector RAG (`ai.vector_rag` hỗ trợ `FAISS`, `ChromaDB` và cosine embeddings nội bộ), Function/Tool Calling (`ai.agent_tools`), Customer Q&A có đối chiếu nguồn (`ai.customer_qa`), phân tích vận hành phiên live (`ai.operations`) và bộ đánh giá định lượng (`ai.evaluation`).
-- **FastAPI Backend (`backend/`)**: Kết nối cơ sở dữ liệu đa gian hàng **MongoDB & Redis** thông qua `StoreDatabaseFacade` (tự động fallback về bộ nhớ đệm `recent_comments` khi chạy độc lập không có Docker/DB), tích hợp mô hình phân loại ý định huấn luyện cục bộ (`backend.local_model`), hỗ trợ Ollama LLM cục bộ tùy chọn (`backend.ollama_provider`), giao diện **Operator Console Dashboard** (`/dashboard`), và bộ kiểm thử End-to-End phiên livestream dài (`backend.e2e_verification`).
+- **FastAPI Backend (`backend/`)**: Kết nối cơ sở dữ liệu đa gian hàng **MongoDB & Redis** thông qua `StoreDatabaseFacade` (tự động fallback về `EmbeddedMongoDatabaseManager` có lưu bền vững xuống đĩa tại `backend/database/.local_db/livestream_sales_db.json` khi chạy độc lập không có Docker/DB), tích hợp mô hình phân loại ý định huấn luyện cục bộ (`backend.local_model`), hỗ trợ Ollama LLM cục bộ tùy chọn (`backend.ollama_provider`), giao diện **Operator Console Dashboard** (`/dashboard`), và bộ kiểm thử End-to-End phiên livestream dài (`backend.e2e_verification`).
 - **Frontend Dashboard (`frontend/`)**: Ứng dụng Next.js / React cho người vận hành theo dõi luồng bình luận thời gian thực, kiểm thử Multi-Agent + Tool Calling, tra cứu Vector RAG, quản lý sản phẩm/tồn kho và đơn hàng livestream.
-- **YouTube Live Chrome Extension (`extension/`)**: Thu thập bình luận thời gian thực ở chế độ **chỉ đọc đối với khung chat công khai (Read-only Public Chat)**, cung cấp nút bật/tắt AI trên trình phát YouTube, thanh chip lọc bình luận đáng chú ý và hộp thoại nháp nội bộ (`Draft Ready` / `Needs Review`) cho Moderator.
+- **YouTube Live Chrome Extension (`extension/`)**: Thu thập bình luận thời gian thực với **hai công tắc độc lập** (`Enable Collector` và `Auto-Reply in Chat` — mặc định **TẮT** auto-reply), thanh chip lọc bình luận đáng chú ý, hộp thoại nháp nội bộ (`Draft Ready` / `Needs Review`, nơi nút `Save Note` chỉ lưu ghi chú nội bộ và tuyệt đối không đẩy ra khung chat công khai), cùng hàng đợi gửi tin tuần tự (`chatSendQueue`) an toàn khi bật `Auto-Reply in Chat`.
 
 ## Mục tiêu và phạm vi an toàn
 
-- Tạo bản nháp câu trả lời (`CustomerAnswerDraft` với `is_draft=True`) dựa trên catalog sản phẩm, FAQ và chính sách bán hàng kèm mã nguồn trích dẫn (`source_id`).
-- Chuyển các câu hỏi thiếu bằng chứng, mâu thuẫn dữ liệu, vượt phạm vi hoặc yêu cầu thao tác quan trọng (hoàn tiền, đổi giá, chốt/hủy đơn) sang trạng thái `needs_review` để người vận hành xử lý.
+- Tạo bản nháp câu trả lời (`CustomerAnswerDraft` với `is_draft=True`) dựa trên catalog sản phẩm, tồn kho thời gian thực trong DB, FAQ và chính sách bán hàng kèm mã nguồn trích dẫn (`source_id`), hỗ trợ đầy đủ cả tiếng Việt và tiếng Anh (giá, tồn kho, phí ship COD/freeship, đổi trả).
+- Chuyển các câu hỏi thiếu bằng chứng, mâu thuẫn dữ liệu, vượt phạm vi hoặc yêu cầu thao tác rủi ro (hoàn tiền, đổi giá, khiếu nại, số lượng đặt không hợp lệ ngoài `1..20` hoặc vượt tồn kho) sang trạng thái `needs_review` để người vận hành xử lý.
+- Tự động nhận diện bình luận chốt đơn hợp lệ (hỗ trợ nhiều sản phẩm trong 1 bình luận và câu chốt có dấu `?`, lọc bỏ câu phủ định/câu hỏi/đơn cũ, kiểm tra tồn kho thực tế trước khi tạo đơn, chống trùng đơn liên tiếp từ cùng 1 viewer, đặt trạng thái `pending` / `unpaid` khi chưa có SĐT + địa chỉ và `confirmed` / `cod` khi đã kèm SĐT + địa chỉ).
 - Phân loại bình luận, chấm điểm mức độ tiềm năng mua hàng (`lead_score`, `lead_label`: `hot`, `warm`, `cold`), tổng hợp câu hỏi lặp và sự kiện phiên livestream.
-- Lưu trữ và đồng bộ bình luận, bản nháp (`seller_action`: `pending`, `approved`, `edited`), thống kê phiên, sản phẩm/tồn kho và đơn hàng qua **MongoDB & Redis Repository** (`StoreDatabaseFacade`).
-- **Nguyên tắc an toàn cốt lõi**: Mọi câu trả lời do AI sinh ra đều là **bản nháp (`Draft Ready`)**. Extension và Backend **tuyệt đối không tự động gõ hay gửi tin nhắn vào khung chat công khai của YouTube Live** và không tự động thực thi giao dịch thanh toán/hoàn tiền.
+- Lưu trữ và đồng bộ bình luận, bản nháp (`seller_action`: `pending`, `approved`, `edited`), thống kê phiên, sản phẩm/tồn kho và đơn hàng qua **MongoDB & Redis Repository** (`StoreDatabaseFacade`), kèm cơ chế lưu file JSON cục bộ (`backend/database/.local_db/livestream_sales_db.json`) để không mất dữ liệu khi khởi động lại server mà không bật Docker.
+- **Nguyên tắc an toàn cốt lõi**: Mọi câu trả lời do AI sinh ra đều là **bản nháp (`Draft Ready`)**. Mặc định công tắc `Auto-Reply in Chat` ở trạng thái **TẮT** (chỉ thu thập & hiển thị nháp nội bộ); nút `Save Note` trong hộp thoại Moderator chỉ lưu ghi chú nội bộ vào `/thread`. Khi người vận hành chủ động bật `Auto-Reply in Chat`, tin nhắn được đưa vào hàng đợi tuần tự (`chatSendQueue` kèm khóa mutex và cooldown `1800ms`), dùng `InputEvent` chuẩn (không dùng `document.execCommand`), bảo toàn nội dung streamer đang gõ dở và kiểm tra trạng thái khung chat (Slow Mode / Subscribers-only / chưa đăng nhập).
 
 ## Kiến trúc mô-đun
 
@@ -118,16 +119,16 @@ OLLAMA_TIMEOUT_SECONDS=30
 
 ## Cài đặt và sử dụng Extension YouTube Live
 
-Extension kết nối với khung chat YouTube Live ở chế độ **chỉ đọc đối với khung chat công khai (không tự động gửi tin nhắn cho khách)**, đồng thời cung cấp giao diện hỗ trợ nhanh cho người vận hành ngay trên trang livestream.
+Extension kết nối với khung chat YouTube Live với hai công tắc tách biệt (**`Enable Collector`** và **`Auto-Reply in Chat`** — mặc định tắt tự động trả lời công khai), đồng thời cung cấp giao diện hỗ trợ nhanh cho người vận hành ngay trên trang livestream.
 
 1. Mở trình duyệt Chrome / Brave / Edge, truy cập `chrome://extensions/`.
 2. Bật **Developer mode** (Chế độ cho nhà phát triển) ở góc trên bên phải.
 3. Nhấn **Load unpacked** (Tải tiện ích đã giải nén) và chọn thư mục `extension/` trong dự án.
 4. Mở một video YouTube Live có khung chat:
-   - Nhấn nút biểu tượng **AI** trên thanh điều khiển trình phát video để bật **Enable** (hoặc mở nhanh **Open AI Dashboard**).
+   - Nhấn nút biểu tượng **AI** trên thanh điều khiển trình phát video để bật **Enable Collector**, tùy chọn bật/tắt **Auto-Reply in Chat** (mặc định tắt), hoặc mở nhanh **Open AI Dashboard**.
    - Khi khán giả bình luận, extension trích xuất bình luận và gửi về `POST /api/plugin/comments`.
    - Các bình luận có ý định mua hàng hoặc có bản nháp câu trả lời sẽ xuất hiện dưới dạng **thanh chip ngang** phía trên khung chat.
-   - Nhấn vào chip để mở hộp thoại nội bộ xem nguồn trích dẫn (`sources`), trạng thái **`Draft Ready`** (đã có bản nháp AI) hoặc **`Needs Review`** (cần người vận hành kiểm tra), và lưu ghi chú/duyệt nháp nội bộ (`Save Note`).
+   - Nhấn vào chip để mở hộp thoại nội bộ xem nguồn trích dẫn (`sources`), trạng thái **`Draft Ready`** (đã có bản nháp AI) hoặc **`Needs Review`** (cần người vận hành kiểm tra), và lưu ghi chú/duyệt nháp nội bộ (`Save Note` — chỉ lưu nội bộ, không gửi ra khung chat YouTube).
 
 ## Tài liệu chi tiết
 

@@ -357,11 +357,16 @@ class OrderRepository(BaseTenantRepository[OrderDocument]):
         *,
         status: OrderStatus | None = None,
         customer_handle: str | None = None,
-        limit: int = 100,
+        limit: int = 200,
     ) -> list[OrderDocument]:
         extra: dict[str, Any] = {}
         if status is not None:
             extra["status"] = status
         if customer_handle:
             extra["customer_handle"] = customer_handle.strip()
-        return await self.list_in_tenant(ctx, extra, sort=[("order_id", 1)], limit=limit)
+        return await self.list_in_tenant(
+            ctx,
+            extra,
+            sort=[("created_at", -1), ("order_id", -1)],
+            limit=limit,
+        )

@@ -5,6 +5,7 @@ from backend.database.contracts import (
     StoreDatabaseFacade,
 )
 from backend.database.embedded_engine import (
+    DEFAULT_LOCAL_DB_PATH,
     EmbeddedMongoDatabaseManager,
     EmbeddedRedisManager,
 )
@@ -102,6 +103,7 @@ __all__ = [
     "COLL_USERS",
     "CommentPersistenceResult",
     "CustomerDocument",
+    "DEFAULT_LOCAL_DB_PATH",
     "DatabaseConnectionError",
     "DatabaseDocumentModel",
     "DatabaseError",

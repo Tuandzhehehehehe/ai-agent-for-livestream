@@ -1,14 +1,18 @@
-"""Embedded local MongoDB (livestream_sales_db) and Redis engine for zero-Docker execution.
+"""Embedded local MongoDB (livestream_sales_db) and Redis engine with JSON disk persistence.
 
 Implements the exact async PyMongo and redis.asyncio interfaces required by
 StoreDatabaseFacade, all 13 MongoDB collections, and all 7 Redis key patterns
-specified in Section 3.2.4 (Database Design).
+specified in Section 3.2.4 (Database Design), with automatic file persistence
+so data survives server restarts even when Docker is not running.
 """
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from copy import deepcopy
-from datetime import datetime
+from datetime import datetime, timezone
+import json
+from pathlib import Path
 import time
 from typing import Any
 
@@ -33,6 +37,10 @@ from backend.database.mongodb import (
     COLL_USERS,
 )
 
+DEFAULT_LOCAL_DB_PATH = (
+    Path(__file__).resolve().parent / ".local_db" / "livestream_sales_db.json"
+)
+
 UNIQUE_KEYS_BY_COLLECTION: dict[str, list[tuple[str, ...]]] = {
     COLL_USERS: [("user_id",), ("email",)],
     COLL_STORES: [("store_id",), ("store_id", "slug")],
@@ -48,6 +56,57 @@ UNIQUE_KEYS_BY_COLLECTION: dict[str, list[tuple[str, ...]]] = {
     COLL_ANSWER_DRAFTS: [("store_id", "draft_id")],
     COLL_ORDERS: [("store_id", "order_id")],
 }
+
+_DATETIME_FIELD_NAMES = frozenset(
+    {
+        "created_at",
+        "updated_at",
+        "verified_at",
+        "effective_from",
+        "effective_to",
+        "first_seen_at",
+        "last_seen_at",
+        "started_at",
+        "ended_at",
+        "timestamp",
+        "acted_at",
+    }
+)
+
+
+def _encode_json_value(obj: Any) -> Any:
+    if isinstance(obj, datetime):
+        return obj.isoformat()
+    if isinstance(obj, dict):
+        return {k: _encode_json_value(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_encode_json_value(v) for v in obj]
+    return obj
+
+
+def _decode_json_doc(doc: dict[str, Any]) -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    for k, v in doc.items():
+        if k in _DATETIME_FIELD_NAMES and isinstance(v, str):
+            try:
+                parsed = datetime.fromisoformat(v)
+                if parsed.tzinfo is None:
+                    parsed = parsed.replace(tzinfo=timezone.utc)
+                out[k] = parsed
+                continue
+            except ValueError:
+                pass
+        elif isinstance(v, dict):
+            out[k] = _decode_json_doc(v)
+            continue
+        elif isinstance(v, list):
+            out[k] = [
+                _decode_json_doc(item) if isinstance(item, dict) else item
+                for item in v
+            ]
+            continue
+        out[k] = v
+    return out
 
 
 def _matches_filter(doc: dict[str, Any], filter_query: dict[str, Any] | None) -> bool:
@@ -125,11 +184,21 @@ class _DeleteResult:
 
 
 class EmbeddedAsyncCollection:
-    def __init__(self, name: str) -> None:
+    def __init__(
+        self,
+        name: str,
+        *,
+        on_mutate: Callable[[], None] | None = None,
+    ) -> None:
         self.name = name
         self._docs: list[dict[str, Any]] = []
         self._next_id = 1
         self._indexes: list[str] = ["_id_"]
+        self._on_mutate = on_mutate
+
+    def _notify_mutation(self) -> None:
+        if self._on_mutate is not None:
+            self._on_mutate()
 
     def _check_unique(self, candidate: dict[str, Any], ignore_index: int | None = None) -> None:
         for key_tuple in UNIQUE_KEYS_BY_COLLECTION.get(self.name, []):
@@ -188,6 +257,7 @@ class EmbeddedAsyncCollection:
         doc.setdefault("_id", f"oid-{self._next_id}")
         self._next_id += 1
         self._docs.append(doc)
+        self._notify_mutation()
         return doc["_id"]
 
     async def find_one_and_update(
@@ -208,6 +278,7 @@ class EmbeddedAsyncCollection:
                         _apply_nested_inc(updated, k, delta)
                 self._check_unique(updated, ignore_index=idx)
                 self._docs[idx] = updated
+                self._notify_mutation()
                 return deepcopy(updated if return_document == ReturnDocument.AFTER else existing)
 
         if not upsert:
@@ -228,6 +299,7 @@ class EmbeddedAsyncCollection:
         new_doc.setdefault("_id", f"oid-{self._next_id}")
         self._next_id += 1
         self._docs.append(new_doc)
+        self._notify_mutation()
         return deepcopy(new_doc)
 
     async def update_many(
@@ -243,12 +315,15 @@ class EmbeddedAsyncCollection:
                     updated.update(deepcopy(update_doc["$set"]))
                 self._docs[idx] = updated
                 count += 1
+        if count > 0:
+            self._notify_mutation()
         return count
 
     async def delete_one(self, filter_query: dict[str, Any]) -> _DeleteResult:
         for idx, existing in enumerate(self._docs):
             if _matches_filter(existing, filter_query):
                 self._docs.pop(idx)
+                self._notify_mutation()
                 return _DeleteResult(1)
         return _DeleteResult(0)
 
@@ -256,6 +331,8 @@ class EmbeddedAsyncCollection:
         kept = [d for d in self._docs if not _matches_filter(d, filter_query)]
         deleted = len(self._docs) - len(kept)
         self._docs = kept
+        if deleted > 0:
+            self._notify_mutation()
         return _DeleteResult(deleted)
 
     async def count_documents(self, filter_query: dict[str, Any] | None = None) -> int:
@@ -263,17 +340,70 @@ class EmbeddedAsyncCollection:
 
 
 class EmbeddedAsyncDatabase:
-    def __init__(self, name: str = "livestream_sales_db") -> None:
+    def __init__(
+        self,
+        name: str = "livestream_sales_db",
+        *,
+        persist_path: Path | None = None,
+    ) -> None:
         self.name = name
+        self._persist_path = persist_path
+        self._loading = False
         self._collections: dict[str, EmbeddedAsyncCollection] = {
-            coll_name: EmbeddedAsyncCollection(coll_name)
+            coll_name: EmbeddedAsyncCollection(coll_name, on_mutate=self.flush_to_disk)
             for coll_name in ALL_COLLECTIONS
         }
         self._validators: dict[str, dict[str, Any]] = {}
+        if self._persist_path is not None:
+            self._load_from_disk()
+
+    def _load_from_disk(self) -> None:
+        if self._persist_path is None or not self._persist_path.is_file():
+            return
+        self._loading = True
+        try:
+            raw = json.loads(self._persist_path.read_text(encoding="utf-8"))
+            collections_raw = raw.get("collections", {}) if isinstance(raw, dict) else {}
+            for coll_name, docs in collections_raw.items():
+                if not isinstance(docs, list):
+                    continue
+                coll = self[coll_name]
+                coll._docs = [
+                    _decode_json_doc(d) for d in docs if isinstance(d, dict)
+                ]
+                coll._next_id = len(coll._docs) + 1
+        except Exception:
+            pass
+        finally:
+            self._loading = False
+
+    def flush_to_disk(self) -> None:
+        if self._persist_path is None or self._loading:
+            return
+        try:
+            self._persist_path.parent.mkdir(parents=True, exist_ok=True)
+            payload = {
+                "database": self.name,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+                "collections": {
+                    coll_name: [_encode_json_value(d) for d in coll._docs]
+                    for coll_name, coll in self._collections.items()
+                },
+            }
+            tmp_path = self._persist_path.with_suffix(".tmp")
+            tmp_path.write_text(
+                json.dumps(payload, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            tmp_path.replace(self._persist_path)
+        except Exception:
+            pass
 
     def __getitem__(self, name: str) -> EmbeddedAsyncCollection:
         if name not in self._collections:
-            self._collections[name] = EmbeddedAsyncCollection(name)
+            self._collections[name] = EmbeddedAsyncCollection(
+                name, on_mutate=self.flush_to_disk
+            )
         return self._collections[name]
 
     async def list_collection_names(self) -> list[str]:
@@ -288,7 +418,9 @@ class EmbeddedAsyncDatabase:
         validationAction: str = "error",
     ) -> EmbeddedAsyncCollection:
         if name not in self._collections:
-            self._collections[name] = EmbeddedAsyncCollection(name)
+            self._collections[name] = EmbeddedAsyncCollection(
+                name, on_mutate=self.flush_to_disk
+            )
         if validator is not None:
             self._validators[name] = validator
         return self._collections[name]
@@ -300,11 +432,17 @@ class EmbeddedAsyncDatabase:
 
 
 class EmbeddedMongoDatabaseManager:
-    """Drop-in local MongoDatabaseManager for livestream_sales_db with all 13 collections."""
+    """Drop-in local MongoDatabaseManager for livestream_sales_db with optional disk persistence."""
 
-    def __init__(self, database_name: str = "livestream_sales_db") -> None:
+    def __init__(
+        self,
+        database_name: str = "livestream_sales_db",
+        *,
+        persist_path: Path | None = None,
+    ) -> None:
         self.database_name = database_name
-        self._db = EmbeddedAsyncDatabase(database_name)
+        self._persist_path = persist_path
+        self._db = EmbeddedAsyncDatabase(database_name, persist_path=persist_path)
         self._connected = True
 
     @property
@@ -326,9 +464,11 @@ class EmbeddedMongoDatabaseManager:
             "status": "healthy",
             "database": self.database_name,
             "collections": len(ALL_COLLECTIONS),
+            "persisted": self._persist_path is not None,
         }
 
     async def close(self) -> None:
+        self._db.flush_to_disk()
         self._connected = False
 
 

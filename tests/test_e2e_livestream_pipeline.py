@@ -1,9 +1,16 @@
-"""Automated end-to-end and long-session stability tests for Livestream AI."""
+"""Automated end-to-end, order validation, Vietnamese Q&A, and long-session stability tests for Livestream AI."""
 
 from __future__ import annotations
 
+from pathlib import Path
+import tempfile
 import unittest
 
+from backend.database.contracts import StoreDatabaseFacade
+from backend.database.embedded_engine import (
+    EmbeddedMongoDatabaseManager,
+    EmbeddedRedisManager,
+)
 from backend.database.models import TenantContext
 from backend.database.seed import seed_demo_store_data
 from backend.e2e_verification import (
@@ -35,7 +42,8 @@ class LivestreamEndToEndTests(unittest.TestCase):
         self.assertEqual(db["storage_mode"], "mongodb")
         self.assertEqual(db["seeded_products_count"], 12)
         self.assertGreaterEqual(db["seeded_orders_count"], 1)
-        self.assertGreaterEqual(db["auto_orders_created_in_session"], 1)
+        # Aurora Studio Ringlight starts with stock_quantity = 18; each order buys 2 -> exactly 9 orders succeed before stock = 0
+        self.assertEqual(db["auto_orders_created_in_session"], 9)
         self.assertEqual(
             db["total_orders_after_session"],
             db["seeded_orders_count"] + db["auto_orders_created_in_session"],
@@ -45,6 +53,9 @@ class LivestreamEndToEndTests(unittest.TestCase):
 
         self.assertEqual(ext["auto_replied_badge_occurrences"], 0)
         self.assertGreaterEqual(ext["draft_ready_badge_occurrences"], 1)
+        self.assertEqual(ext["deprecated_exec_command_occurrences"], 0)
+        self.assertTrue(ext["auto_reply_toggle_default_off"])
+        self.assertTrue(ext["chat_send_queue_enabled"])
         self.assertTrue(ext["all_answers_marked_is_draft"])
 
     def test_in_memory_fallback_when_database_unavailable(self) -> None:
@@ -118,7 +129,7 @@ class LivestreamEndToEndTests(unittest.TestCase):
             assert updated_draft is not None
             self.assertEqual(updated_draft.seller_action, "approved")
 
-    def test_auto_order_creation_and_database_overview(self) -> None:
+    def test_auto_order_stock_validation_and_live_inventory_qa(self) -> None:
         facade = build_repository_backed_facade()
         ctx = TenantContext.system_context("default-store")
         run_coroutine_sync(seed_demo_store_data(facade, ctx, session_id="youtube-live"))
@@ -130,24 +141,338 @@ class LivestreamEndToEndTests(unittest.TestCase):
             self.assertEqual(overview["total_collections"], 13)
             self.assertEqual(overview["total_redis_patterns"], 7)
 
-            buy_res = client.post(
+            # 1. Ordering an out-of-stock item (SYN-PROD-004 Cloudstep Canvas Tote, stock=0) must be rejected
+            oos_res = client.post(
                 "/api/plugin/comments",
                 json={
-                    "id": "auto-order-test-1",
+                    "id": "oos-order-1",
                     "sender": "@MizuGamingHub",
                     "text": "buy 2 cloudstep canvas tote",
                     "authorType": "viewer",
                     "timestamp": 1791568900000,
                 },
             )
-            self.assertEqual(buy_res.status_code, 200)
-            buy_body = buy_res.json()
-            self.assertIsNotNone(buy_body["auto_order"])
-            self.assertEqual(buy_body["auto_order"]["customer_handle"], "@MizuGamingHub")
-            self.assertEqual(buy_body["auto_order"]["items"][0]["product_id"], "SYN-PROD-004")
-            self.assertEqual(buy_body["auto_order"]["items"][0]["quantity"], 2)
-            self.assertEqual(buy_body["auto_order"]["total_amount"], 23.99)
-            self.assertEqual(buy_body["answer_draft"]["status"], "answered")
+            self.assertEqual(oos_res.status_code, 200)
+            oos_body = oos_res.json()
+            self.assertIsNone(oos_body["auto_order"])
+            self.assertIn("out of stock", oos_body["answer_draft"]["answer"].lower())
+
+            # 2. Ordering more than available stock (SYN-PROD-007 Aurora Studio Ringlight has stock 18) must be rejected
+            over_res = client.post(
+                "/api/plugin/comments",
+                json={
+                    "id": "over-order-1",
+                    "sender": "@StudioBuyer",
+                    "text": "buy 19 Aurora Studio Ringlight",
+                    "authorType": "viewer",
+                    "timestamp": 1791568901000,
+                },
+            )
+            self.assertEqual(over_res.status_code, 200)
+            over_body = over_res.json()
+            self.assertIsNone(over_body["auto_order"])
+            self.assertTrue(over_body["needs_human_review"])
+            self.assertIn("18", over_body["answer_draft"]["answer"])
+
+            # 3. Valid order without phone/address -> creates pending + unpaid order and deducts live inventory
+            valid_res = client.post(
+                "/api/plugin/comments",
+                json={
+                    "id": "valid-order-1",
+                    "sender": "@DeskBuyer",
+                    "text": "buy 2 LumaNest Desk Lamp",
+                    "authorType": "viewer",
+                    "timestamp": 1791568902000,
+                },
+            )
+            self.assertEqual(valid_res.status_code, 200)
+            valid_body = valid_res.json()
+            self.assertIsNotNone(valid_body["auto_order"])
+            self.assertEqual(valid_body["auto_order"]["status"], "pending")
+            self.assertEqual(valid_body["auto_order"]["payment_status"], "unpaid")
+            self.assertEqual(valid_body["auto_order"]["items"][0]["product_id"], "SYN-PROD-001")
+            self.assertEqual(valid_body["auto_order"]["items"][0]["quantity"], 2)
+
+            # 4. Stock Q&A must reflect post-order live DB inventory (12 - 2 = 10 left)
+            stock_qa_res = client.post(
+                "/api/plugin/comments",
+                json={
+                    "id": "stock-qa-1",
+                    "sender": "@StockChecker",
+                    "text": "đèn bàn còn hàng không shop?",
+                    "authorType": "viewer",
+                    "timestamp": 1791568903000,
+                },
+            )
+            self.assertEqual(stock_qa_res.status_code, 200)
+            stock_qa_body = stock_qa_res.json()
+            self.assertEqual(stock_qa_body["intent"], "stock_question")
+            self.assertEqual(stock_qa_body["answer_draft"]["status"], "answered")
+            self.assertIn("10", stock_qa_body["answer_draft"]["answer"])
+
+            # 5. Valid order WITH phone and shipping address -> creates confirmed + cod order
+            confirmed_res = client.post(
+                "/api/plugin/comments",
+                json={
+                    "id": "confirmed-order-1",
+                    "sender": "@FullInfoBuyer",
+                    "text": "chốt 1 đèn bàn SĐT 0912345678 địa chỉ: 123 Nguyễn Huệ Quận 1 TP HCM",
+                    "authorType": "viewer",
+                    "timestamp": 1791568904000,
+                },
+            )
+            self.assertEqual(confirmed_res.status_code, 200)
+            confirmed_body = confirmed_res.json()
+            self.assertIsNotNone(confirmed_body["auto_order"])
+            self.assertEqual(confirmed_body["auto_order"]["status"], "confirmed")
+            self.assertEqual(confirmed_body["auto_order"]["payment_status"], "cod")
+
+    def test_false_positive_filtering_and_question_mark_closing(self) -> None:
+        facade = build_repository_backed_facade()
+        ctx = TenantContext.system_context("default-store")
+        run_coroutine_sync(seed_demo_store_data(facade, ctx, session_id="youtube-live"))
+        app = create_app(db_facade=facade)
+
+        with InProcessAppClient(app) as client:
+            false_positives = [
+                ("fp-1", "don't buy LumaNest Desk Lamp"),
+                ("fp-2", "đừng mua đèn bàn này nha"),
+                ("fp-3", "mình chưa muốn mua đèn bàn lúc này"),
+                ("fp-4", "mình đã mua đèn bàn tuần trước rồi"),
+                ("fp-5", "where is my order for LumaNest Desk Lamp?"),
+                ("fp-6", "take a look at the LumaNest Desk Lamp"),
+            ]
+            for cid, text in false_positives:
+                res = client.post(
+                    "/api/plugin/comments",
+                    json={
+                        "id": cid,
+                        "sender": f"@ViewerFP_{cid}",
+                        "text": text,
+                        "authorType": "viewer",
+                        "timestamp": 1791568910000,
+                    },
+                )
+                self.assertEqual(res.status_code, 200)
+                self.assertIsNone(
+                    res.json()["auto_order"],
+                    f"False positive order should not be created for: {text}",
+                )
+
+            # Closing comment with a question mark ("chốt 1 cái đèn bàn?") MUST create an order
+            q_close_res = client.post(
+                "/api/plugin/comments",
+                json={
+                    "id": "q-close-1",
+                    "sender": "@PoliteBuyer",
+                    "text": "chốt 1 cái đèn bàn?",
+                    "authorType": "viewer",
+                    "timestamp": 1791568920000,
+                },
+            )
+            self.assertEqual(q_close_res.status_code, 200)
+            q_close_body = q_close_res.json()
+            self.assertIsNotNone(q_close_body["auto_order"])
+            self.assertEqual(q_close_body["auto_order"]["items"][0]["product_id"], "SYN-PROD-001")
+            self.assertEqual(q_close_body["auto_order"]["items"][0]["quantity"], 1)
+
+    def test_invalid_quantities_multi_item_orders_and_deduplication(self) -> None:
+        facade = build_repository_backed_facade()
+        ctx = TenantContext.system_context("default-store")
+        run_coroutine_sync(seed_demo_store_data(facade, ctx, session_id="youtube-live"))
+        app = create_app(db_facade=facade)
+
+        with InProcessAppClient(app) as client:
+            # 1. Invalid quantity 0 -> rejected, not coerced to 1
+            zero_res = client.post(
+                "/api/plugin/comments",
+                json={
+                    "id": "qty-zero-1",
+                    "sender": "@QtyTester",
+                    "text": "mua 0 đèn bàn",
+                    "authorType": "viewer",
+                    "timestamp": 1791568930000,
+                },
+            )
+            self.assertEqual(zero_res.status_code, 200)
+            self.assertIsNone(zero_res.json()["auto_order"])
+            self.assertTrue(zero_res.json()["needs_human_review"])
+
+            # 2. Invalid quantity 25 (> 20 limit) -> rejected, not coerced to 1
+            high_res = client.post(
+                "/api/plugin/comments",
+                json={
+                    "id": "qty-high-1",
+                    "sender": "@QtyTester2",
+                    "text": "buy 25 Pebblebrook Ceramic Mug",
+                    "authorType": "viewer",
+                    "timestamp": 1791568931000,
+                },
+            )
+            self.assertEqual(high_res.status_code, 200)
+            self.assertIsNone(high_res.json()["auto_order"])
+            self.assertTrue(high_res.json()["needs_human_review"])
+
+            # 3. Multi-item order ("mua 2 đèn bàn và 3 cốc sứ") -> single order with 2 items
+            multi_res = client.post(
+                "/api/plugin/comments",
+                json={
+                    "id": "multi-item-1",
+                    "sender": "@MultiBuyer",
+                    "text": "mua 2 đèn bàn và 3 cốc sứ",
+                    "authorType": "viewer",
+                    "timestamp": 1791568932000,
+                },
+            )
+            self.assertEqual(multi_res.status_code, 200)
+            multi_body = multi_res.json()
+            self.assertIsNotNone(multi_body["auto_order"])
+            items = multi_body["auto_order"]["items"]
+            self.assertEqual(len(items), 2)
+            self.assertEqual(items[0]["product_id"], "SYN-PROD-001")
+            self.assertEqual(items[0]["quantity"], 2)
+            self.assertEqual(items[1]["product_id"], "SYN-PROD-002")
+            self.assertEqual(items[1]["quantity"], 3)
+
+            # 4. Consecutive duplicate closing comment from the same viewer -> reuses existing pending order
+            dup_res = client.post(
+                "/api/plugin/comments",
+                json={
+                    "id": "multi-item-2",
+                    "sender": "@MultiBuyer",
+                    "text": "mua 2 đèn bàn và 3 cốc sứ",
+                    "authorType": "viewer",
+                    "timestamp": 1791568933000,
+                },
+            )
+            self.assertEqual(dup_res.status_code, 200)
+            dup_body = dup_res.json()
+            self.assertIsNotNone(dup_body["auto_order"])
+            self.assertEqual(
+                dup_body["auto_order"]["order_id"],
+                multi_body["auto_order"]["order_id"],
+            )
+
+    def test_vietnamese_qa_for_price_stock_shipping_cod_and_return_policy(self) -> None:
+        facade = build_repository_backed_facade()
+        ctx = TenantContext.system_context("default-store")
+        run_coroutine_sync(seed_demo_store_data(facade, ctx, session_id="youtube-live"))
+        app = create_app(db_facade=facade)
+
+        with InProcessAppClient(app) as client:
+            # 1. Vietnamese price question
+            p_res = client.post(
+                "/api/plugin/comments",
+                json={
+                    "id": "vi-price-1",
+                    "sender": "@ViViewer1",
+                    "text": "đèn bàn giá bao nhiêu shop?",
+                    "authorType": "viewer",
+                    "timestamp": 1791568940000,
+                },
+            ).json()
+            self.assertEqual(p_res["intent"], "price_question")
+            self.assertEqual(p_res["answer_draft"]["status"], "answered")
+            self.assertFalse(p_res["needs_human_review"])
+            self.assertIn("$24.50", p_res["answer_draft"]["answer"])
+
+            # 2. Vietnamese stock question
+            s_res = client.post(
+                "/api/plugin/comments",
+                json={
+                    "id": "vi-stock-1",
+                    "sender": "@ViViewer2",
+                    "text": "cốc sứ còn hàng không ạ?",
+                    "authorType": "viewer",
+                    "timestamp": 1791568941000,
+                },
+            ).json()
+            self.assertEqual(s_res["intent"], "stock_question")
+            self.assertEqual(s_res["answer_draft"]["status"], "answered")
+            self.assertFalse(s_res["needs_human_review"])
+            self.assertIn("40", s_res["answer_draft"]["answer"])
+
+            # 3. Vietnamese COD / shipping fee question
+            cod_res = client.post(
+                "/api/plugin/comments",
+                json={
+                    "id": "vi-cod-1",
+                    "sender": "@ViViewer3",
+                    "text": "phí ship COD bao nhiêu tiền vậy shop?",
+                    "authorType": "viewer",
+                    "timestamp": 1791568942000,
+                },
+            ).json()
+            self.assertEqual(cod_res["intent"], "shipping_policy")
+            self.assertEqual(cod_res["answer_draft"]["status"], "answered")
+            self.assertFalse(cod_res["needs_human_review"])
+            self.assertIn("COD", cod_res["answer_draft"]["answer"])
+            self.assertIn("$4.99", cod_res["answer_draft"]["answer"])
+
+            # 4. Vietnamese return policy question
+            ret_res = client.post(
+                "/api/plugin/comments",
+                json={
+                    "id": "vi-ret-1",
+                    "sender": "@ViViewer4",
+                    "text": "chính sách đổi trả bảo hành thế nào?",
+                    "authorType": "viewer",
+                    "timestamp": 1791568943000,
+                },
+            ).json()
+            self.assertEqual(ret_res["intent"], "return_policy")
+            self.assertEqual(ret_res["answer_draft"]["status"], "answered")
+            self.assertFalse(ret_res["needs_human_review"])
+            self.assertIn("14 ngày", ret_res["answer_draft"]["answer"])
+
+    def test_embedded_database_disk_persistence_across_restart(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_file = Path(tmpdir) / "test_livestream_db.json"
+            ctx = TenantContext.system_context("default-store")
+
+            # First server process writes to disk-backed EmbeddedMongoDatabaseManager
+            mongo_1 = EmbeddedMongoDatabaseManager("livestream_sales_db", persist_path=db_file)
+            facade_1 = StoreDatabaseFacade(mongo_1, EmbeddedRedisManager())  # type: ignore[arg-type]
+            run_coroutine_sync(seed_demo_store_data(facade_1, ctx, session_id="youtube-live"))
+            app_1 = create_app(db_facade=facade_1)
+            with InProcessAppClient(app_1) as client_1:
+                order_res = client_1.post(
+                    "/api/plugin/comments",
+                    json={
+                        "id": "persist-c-1",
+                        "sender": "@DiskBuyer",
+                        "text": "mua 1 cốc sứ",
+                        "authorType": "viewer",
+                        "timestamp": 1791568950000,
+                    },
+                ).json()
+                created_order_id = order_res["auto_order"]["order_id"]
+
+            self.assertTrue(db_file.exists())
+
+            # Second server process loads from the same disk file (fresh app instance with empty RAM)
+            mongo_2 = EmbeddedMongoDatabaseManager("livestream_sales_db", persist_path=db_file)
+            facade_2 = StoreDatabaseFacade(mongo_2, EmbeddedRedisManager())  # type: ignore[arg-type]
+            app_2 = create_app(db_facade=facade_2)
+            with InProcessAppClient(app_2) as client_2:
+                comments_2 = client_2.get("/api/plugin/comments").json()
+                self.assertEqual(len(comments_2), 1)
+                self.assertIsNotNone(comments_2[0]["auto_order"])
+                self.assertEqual(comments_2[0]["auto_order"]["order_id"], created_order_id)
+
+                # Creating a new order after restart must NOT collide with created_order_id
+                next_res = client_2.post(
+                    "/api/plugin/comments",
+                    json={
+                        "id": "persist-c-2",
+                        "sender": "@DiskBuyer2",
+                        "text": "mua 1 đèn bàn",
+                        "authorType": "viewer",
+                        "timestamp": 1791568955000,
+                    },
+                ).json()
+                self.assertIsNotNone(next_res["auto_order"])
+                self.assertNotEqual(next_res["auto_order"]["order_id"], created_order_id)
 
 
 if __name__ == "__main__":

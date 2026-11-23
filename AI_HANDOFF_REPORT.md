@@ -10,16 +10,16 @@ Workspace hiện bao gồm đầy đủ 4 thành phần đã tích hợp đồng
    - `ai.customer_qa` & `ai.operations`: Phân loại ý định theo tập luật, truy xuất bằng chứng có mã nguồn (`source_id`), tạo bản nháp câu trả lời (`CustomerAnswerDraft` với `is_draft=True`), cổng kiểm duyệt an toàn và tổng hợp thống kê vận hành phiên livestream.
 2. **FastAPI Backend & Database Layer (`backend/`)**:
    - `backend.main` được nối trực tiếp với tầng cơ sở dữ liệu đa gian hàng **MongoDB (`livestream_sales_db` gồm đủ 13 collections)** & **Redis (đủ 7 cấu trúc dữ liệu `Hash`, `List`, `Stream`, `Pub/Sub`, `String`)** thông qua `StoreDatabaseFacade` (`backend.database`, `backend.repositories`, `backend.infrastructure`, `backend.database.embedded_engine`) cho cả chiều **ghi** và chiều **đọc**:
-     - `POST /api/plugin/comments`: Nhận bình luận, kiểm tra rate-limit/moderation, phân loại intent, chấm điểm tiềm năng mua hàng (`lead_score`, `lead_label`), tự động nhận diện yêu cầu mua hàng để **Auto Lên Đơn Hàng (`auto_order`)** & trừ tồn kho, sinh bản nháp câu trả lời và lưu vào MongoDB (`CustomerRepository`, `LivestreamCommentRepository`, `AnswerDraftRepository`, `OrderRepository`), cập nhật `LivestreamSessionRepository.increment_metrics` và đồng bộ Redis (`state` Hash, `comments` List, `events` Stream, `pubsub` Pub/Sub, `dedupe` String, `cache:product` & `cache:session` String).
-     - `GET /api/plugin/comments` & `GET /api/plugin/summary`: Đọc danh sách bình luận, bản nháp và thống kê trực tiếp từ MongoDB Repository (`_load_comments_from_repository`) kèm trường `storage_mode="mongodb"`, đồng thời tự động fallback về bộ nhớ đệm `recent_comments` (`storage_mode="in_memory"`) khi tắt DB.
+     - `POST /api/plugin/comments`: Nhận bình luận, kiểm tra rate-limit/moderation, phân loại intent (hỗ trợ đầy đủ Q&A tiếng Việt về giá, tồn kho thời gian thực, phí ship COD/freeship, thời gian giao hàng, đổi trả), chấm điểm tiềm năng mua hàng (`lead_score`, `lead_label`), nhận diện yêu cầu mua hàng hợp lệ để **Auto Lên Đơn Hàng (`auto_order`)** (kiểm tra tồn kho thực tế `stock > 0` và `qty <= stock`, hỗ trợ chốt nhiều sản phẩm trong 1 câu và câu có dấu `?`, lọc câu phủ định/quá khứ/hỏi đơn, từ chối số lượng ngoài `1..20`, chống trùng đơn liên tiếp từ cùng viewer, đặt trạng thái `pending`/`unpaid` khi chưa có SĐT+địa chỉ và `confirmed`/`cod` khi đã có SĐT+địa chỉ, sinh `order_id` chống đè từ DB), sinh bản nháp câu trả lời và lưu vào MongoDB (`CustomerRepository`, `LivestreamCommentRepository`, `AnswerDraftRepository`, `OrderRepository`, kèm lưu bền vững xuống đĩa `backend/database/.local_db/livestream_sales_db.json` khi chạy Embedded DB), cập nhật `LivestreamSessionRepository.increment_metrics` và đồng bộ Redis.
+     - `GET /api/plugin/comments` & `GET /api/plugin/summary`: Đọc danh sách bình luận, bản nháp, thông tin `auto_order` (khôi phục từ `OrderRepository` qua tag `[comment_id:...]` ngay cả sau khi restart server) và thống kê trực tiếp từ MongoDB Repository (`_load_comments_from_repository`) kèm trường `storage_mode="mongodb"`.
      - `POST /api/plugin/comments/{comment_id}/thread`: Lưu trao đổi/ghi chú nội bộ của Moderator trong bộ nhớ runtime (`threads_by_comment`) và cập nhật trạng thái duyệt nháp (`record_seller_action`: `approved` hoặc `edited`) trong MongoDB.
-     - `GET /api/store/products`, `GET /api/store/orders`, `POST /api/store/seed`: Đọc/ghi sản phẩm, biến thể, tồn kho và đơn hàng livestream qua Repository.
+     - `GET /api/store/products`, `GET /api/store/orders`, `POST /api/store/seed`: Đọc/ghi sản phẩm, biến thể, tồn kho và đơn hàng livestream qua Repository (`OrderRepository.list_orders` sắp xếp giảm dần theo `created_at` & `order_id` để luôn hiển thị đơn mới nhất).
      - `GET /api/database/overview`: Trả về cấu trúc chi tiết và số lượng bản ghi thời gian thực của toàn bộ **13 MongoDB collections** trong `livestream_sales_db` cùng **7 mẫu khóa Redis**.
    - `backend.local_model`: Mô hình TF-IDF character n-gram + Logistic Regression huấn luyện từ 260 mẫu song ngữ Anh/Việt và đánh giá trên 65 mẫu holdout độc lập.
 3. **Giao diện Operator Dashboard (`backend/dashboard.html` & `frontend/`)**:
    - Giao diện bảng điều khiển phục vụ trực tiếp tại `GET /dashboard` (và ứng dụng Next.js tại `frontend/`) cho phép theo dõi bình luận thời gian thực, đơn hàng Auto-Order, kiểm thử Multi-Agent + Tool Calling, tìm kiếm Vector RAG, xem danh mục sản phẩm/tồn kho và giám sát trực tiếp 13 MongoDB Collections + 7 Redis Key Patterns.
 4. **Chrome Extension YouTube Live (`extension/`)**:
-   - Thu thập bình luận thời gian thực từ YouTube Live, hiển thị nút bật/tắt AI trên trình phát video, thanh chip lọc bình luận quan trọng và hộp thoại chi tiết hiển thị nhãn **`Draft Ready`**, **`Needs Review`** và **`Order #ORD-LIVE-...`**, đồng thời hỗ trợ tự động gửi phản hồi `🤖 @TênKhách ...` vào khung chat YouTube Live.
+   - Thu thập bình luận thời gian thực từ YouTube Live, cung cấp 2 công tắc tách biệt trên trình phát video (**`Enable Collector`** và **`Auto-Reply in Chat`** — mặc định tắt auto-reply), thanh chip lọc bình luận quan trọng và hộp thoại chi tiết hiển thị nhãn **`Draft Ready`**, **`Needs Review`** và **`Order #ORD-LIVE-...`**. Nút **`Save Note`** chỉ lưu ghi chú nội bộ vào `/thread`; khi bật **`Auto-Reply in Chat`**, phản hồi `🤖 @TênKhách ...` được đẩy qua hàng đợi tuần tự (`chatSendQueue`) có khóa mutex, cooldown `1800ms`, sự kiện `InputEvent` hiện đại (không dùng `execCommand`), kiểm tra khung chat bị giới hạn và xác nhận trạng thái gửi thành công.
 
 ---
 
@@ -33,7 +33,7 @@ Các lệnh kiểm chứng đã chạy thành công trên workspace:
 | `python -m ai.evaluation.runner` | Hoàn tất thành công; xuất `reports/evaluation_report.json` và `docs/EVALUATION_REPORT.md` |
 | `python -m backend.local_model` | Huấn luyện 260 mẫu, đo holdout 65 mẫu; xuất `reports/local_intent_model_report.json` và `docs/LOCAL_MODEL_EVALUATION.md` |
 | `python -m backend.e2e_verification` | Kiểm thử End-to-End & phiên livestream dài 300 bình luận liên tục; xuất `reports/e2e_verification_report.json` và `docs/E2E_VERIFICATION_REPORT.md` |
-| `python -m unittest discover -s tests -v` | Toàn bộ 4 kịch bản kiểm thử E2E, Auto-Order & Database Design (13 collections + 7 Redis patterns) đều PASS (`OK`) |
+| `python -m unittest discover -s tests -v` | Toàn bộ 8 kịch bản kiểm thử E2E, Auto-Order (kiểm tra tồn kho, multi-item, chống trùng đơn, lọc false-positive), Q&A tiếng Việt, lưu trữ đĩa qua restart & Database Design đều PASS (`OK`) |
 
 ### 2.1. Kết quả Kiểm thử End-to-End & Phiên Livestream Dài (`docs/E2E_VERIFICATION_REPORT.md`)
 
@@ -48,7 +48,7 @@ Các lệnh kiểm chứng đã chạy thành công trên workspace:
 | Số bình luận khôi phục khi khởi động lại (`Cold-Start Repository Read`) | 300 |
 | Số bình luận bị mất (`Lost comments`) | **0** |
 | Số bản ghi bị nhân đôi (`Duplicate records`) | **0** |
-| Đơn hàng tự động lên đơn trong phiên (`auto_orders_created_in_session`) | **18** đơn (tổng 24 đơn trong `orders` collection) |
+| Đơn hàng tự động lên đơn trong phiên (`auto_orders_created_in_session`) | **9** đơn (đặt `2x Aurora Studio Ringlight` mỗi đơn cho tới khi hết sạch tồn kho `18 -> 0`; các yêu cầu đặt tiếp khi `stock = 0` bị từ chối an toàn) |
 | Độ trễ xử lý trung bình (`Mean latency / p50 / p95 / p99`) | `3.65 ms / 3.51 ms / 8.53 ms / 10.97 ms` |
 | Kiểm thử Burst Rate Limit (6 bình luận liên tiếp / 1 viewer) | `[200, 200, 200, 200, 200, 429]` |
 | Cập nhật trạng thái duyệt nháp qua thread (`record_seller_action`) | `pending` $\rightarrow$ `approved` / `edited` |

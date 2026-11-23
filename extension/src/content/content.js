@@ -10,8 +10,12 @@
   const aiMessages = new Map();
   const sentAiTexts = new Set();
   const autoRepliedIds = new Set();
+  const chatSendQueue = [];
+  const CHAT_SEND_COOLDOWN_MS = 1800;
 
   let isEnabled = false;
+  let isAutoReplyEnabled = false;
+  let isProcessingChatQueue = false;
   let chatObserver = null;
   let structureObserver = null;
   let observedContainer = null;
@@ -27,7 +31,7 @@
   function formatPublicChatReply(sender, rawAnswer) {
     const handle = String(sender || '').replace(/^@+/, '').trim();
     const cleaned = String(rawAnswer || '')
-      .replace(/^Draft\s*\([^)]*\)\s*:\s*/i, '')
+      .replace(/^(?:Draft|Bản nháp)\s*(?:\([^)]*\))?\s*:\s*/i, '')
       .replace(/\s*This is a fictional demo price\.?/gi, '')
       .replace(/\s*This is not live inventory\.?/gi, '')
       .replace(/\s+/g, ' ')
@@ -38,42 +42,40 @@
     return full.length > 195 ? `${full.slice(0, 192)}...` : full;
   }
 
-  function sendToYouTubeLiveChat(messageText) {
-    const text = String(messageText || '').trim();
-    if (!text) return false;
-
-    let chatDoc = document;
-    if (!document.querySelector('yt-live-chat-message-input-renderer')) {
-      try {
-        const frame = document.querySelector('iframe#chatframe, ytd-live-chat-frame iframe');
-        if (frame?.contentDocument) {
-          chatDoc = frame.contentDocument;
-        }
-      } catch (_) {}
+  function resolveChatDocument() {
+    if (document.querySelector('yt-live-chat-message-input-renderer, yt-live-chat-renderer')) {
+      return document;
     }
-
-    const inputRenderer = chatDoc.querySelector('yt-live-chat-message-input-renderer');
-    const inputEl =
-      inputRenderer?.querySelector(
-        'yt-live-chat-text-input-field-renderer #input[contenteditable], #input[contenteditable]'
-      ) ||
-      chatDoc.querySelector('yt-live-chat-text-input-field-renderer #input[contenteditable]');
-
-    if (!inputEl) return false;
-
-    sentAiTexts.add(text);
-
-    inputEl.focus();
-    inputEl.textContent = '';
     try {
-      chatDoc.execCommand('selectAll', false, null);
-      chatDoc.execCommand('insertText', false, text);
+      const frame = document.querySelector('iframe#chatframe, ytd-live-chat-frame iframe');
+      if (frame?.contentDocument) {
+        return frame.contentDocument;
+      }
     } catch (_) {}
+    return document;
+  }
 
-    if (!inputEl.textContent || !inputEl.textContent.trim()) {
-      inputEl.textContent = text;
-    }
-
+  function setEditableTextModern(chatDoc, inputEl, text) {
+    inputEl.focus();
+    inputEl.dispatchEvent(
+      new InputEvent('beforeinput', {
+        bubbles: true,
+        cancelable: true,
+        data: text,
+        inputType: 'insertText'
+      })
+    );
+    inputEl.textContent = text;
+    try {
+      const sel = chatDoc.getSelection?.();
+      if (sel) {
+        const range = chatDoc.createRange();
+        range.selectNodeContents(inputEl);
+        range.collapse(false);
+        sel.removeAllRanges();
+        sel.addRange(range);
+      }
+    } catch (_) {}
     inputEl.dispatchEvent(
       new InputEvent('input', {
         bubbles: true,
@@ -83,6 +85,53 @@
       })
     );
     inputEl.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+
+  function processNextQueuedChatReply() {
+    if (isProcessingChatQueue || !chatSendQueue.length) return;
+    if (!isEnabled || !isAutoReplyEnabled) {
+      chatSendQueue.length = 0;
+      return;
+    }
+
+    const chatDoc = resolveChatDocument();
+    const restricted = chatDoc.querySelector(
+      'yt-live-chat-restricted-participation-renderer'
+    );
+    const inputRenderer = chatDoc.querySelector('yt-live-chat-message-input-renderer');
+    const inputEl =
+      inputRenderer?.querySelector(
+        'yt-live-chat-text-input-field-renderer #input[contenteditable], #input[contenteditable]'
+      ) ||
+      chatDoc.querySelector('yt-live-chat-text-input-field-renderer #input[contenteditable]');
+
+    if (restricted || !inputEl || inputEl.getAttribute('contenteditable') === 'false') {
+      const failedItem = chatSendQueue.shift();
+      if (failedItem?.commentId && aiMessages.has(failedItem.commentId)) {
+        const rec = aiMessages.get(failedItem.commentId);
+        rec.chat_send_status = 'blocked_or_restricted';
+        aiMessages.set(failedItem.commentId, rec);
+      }
+      if (chatSendQueue.length) {
+        setTimeout(processNextQueuedChatReply, CHAT_SEND_COOLDOWN_MS);
+      }
+      return;
+    }
+
+    const existingDraft = (inputEl.textContent || '').trim();
+    if (
+      chatDoc.activeElement === inputEl &&
+      existingDraft.length > 0 &&
+      !sentAiTexts.has(existingDraft)
+    ) {
+      setTimeout(processNextQueuedChatReply, 1500);
+      return;
+    }
+
+    isProcessingChatQueue = true;
+    const { commentId, text } = chatSendQueue.shift();
+    sentAiTexts.add(text);
+    setEditableTextModern(chatDoc, inputEl, text);
 
     setTimeout(() => {
       const sendButton =
@@ -91,23 +140,56 @@
         ) ||
         chatDoc.querySelector('yt-live-chat-message-input-renderer #send-button button');
 
-      if (sendButton && !sendButton.disabled) {
+      const canClickSend = Boolean(
+        sendButton &&
+        !sendButton.disabled &&
+        sendButton.getAttribute('aria-disabled') !== 'true'
+      );
+
+      if (canClickSend) {
         sendButton.click();
-        return;
+      } else {
+        inputEl.dispatchEvent(
+          new KeyboardEvent('keydown', {
+            key: 'Enter',
+            code: 'Enter',
+            keyCode: 13,
+            which: 13,
+            bubbles: true,
+            cancelable: true
+          })
+        );
       }
 
-      inputEl.dispatchEvent(
-        new KeyboardEvent('keydown', {
-          key: 'Enter',
-          code: 'Enter',
-          keyCode: 13,
-          which: 13,
-          bubbles: true,
-          cancelable: true
-        })
-      );
-    }, 100);
+      setTimeout(() => {
+        const remaining = (inputEl.textContent || '').trim();
+        const errorToast = chatDoc.querySelector('yt-live-chat-toast-renderer[is-showing]');
+        const sentOk = remaining === '' && !errorToast;
+        if (!sentOk && remaining === text) {
+          inputEl.textContent = '';
+          inputEl.dispatchEvent(new InputEvent('input', { bubbles: true }));
+        }
+        if (commentId && aiMessages.has(commentId)) {
+          const rec = aiMessages.get(commentId);
+          rec.chat_send_status = sentOk ? 'sent' : 'failed';
+          aiMessages.set(commentId, rec);
+        }
+        isProcessingChatQueue = false;
+        if (chatSendQueue.length) {
+          setTimeout(processNextQueuedChatReply, CHAT_SEND_COOLDOWN_MS);
+        }
+      }, 280);
+    }, 120);
+  }
 
+  function enqueueYouTubeLiveChatReply(commentId, messageText) {
+    const text = String(messageText || '').trim();
+    if (!text || !isEnabled || !isAutoReplyEnabled) return false;
+    if (chatSendQueue.some((item) => item.commentId === commentId || item.text === text)) {
+      return false;
+    }
+    chatSendQueue.push({ commentId, text });
+    processNextQueuedChatReply();
     return true;
   }
 
@@ -426,7 +508,6 @@
             : [...(current.thread_messages || []), payload];
 
           aiMessages.set(record.comment_id, current);
-          sendToYouTubeLiveChat(formatPublicChatReply(record.sender, payload.text));
           if (selectedId === record.comment_id && popover && !popover.hidden) {
             const liveThreadList = popover.querySelector(
               '.livestream-ai-thread-list'
@@ -586,6 +667,7 @@
         upsertChip(record);
 
         if (
+          isAutoReplyEnabled &&
           !autoRepliedIds.has(cid) &&
           record.answer_draft?.status === 'answered' &&
           !record.needs_human_review &&
@@ -594,7 +676,7 @@
         ) {
           autoRepliedIds.add(cid);
           const chatReply = formatPublicChatReply(sender, record.answer_draft.answer);
-          sendToYouTubeLiveChat(chatReply);
+          enqueueYouTubeLiveChatReply(cid, chatReply);
         }
 
         if (selectedId === cid && popover && !popover.hidden) {
@@ -711,6 +793,29 @@
     closePopover();
   }
 
+  function broadcastToChatFrame(payload) {
+    const chatFrame = document.querySelector(
+      'iframe#chatframe, ytd-live-chat-frame iframe'
+    );
+
+    if (chatFrame?.contentWindow) {
+      let targetOrigin = window.location.origin;
+      try {
+        if (chatFrame.src) {
+          targetOrigin = new URL(chatFrame.src, window.location.href).origin;
+        }
+      } catch (_) {}
+
+      chatFrame.contentWindow.postMessage(
+        {
+          source: 'livestream-ai-extension',
+          ...payload
+        },
+        targetOrigin
+      );
+    }
+  }
+
   function setAssistantEnabled(nextState, { broadcast = false } = {}) {
     const normalized = Boolean(nextState);
     const changed = isEnabled !== normalized;
@@ -718,12 +823,13 @@
     isEnabled = normalized;
 
     document
-      .querySelector(`#${PANEL_ID} .livestream-ai-menuitem[role="menuitemcheckbox"]`)
+      .querySelector(`#${PANEL_ID} .livestream-ai-menuitem[data-toggle="collector"]`)
       ?.setAttribute('aria-checked', String(isEnabled));
 
     if (isEnabled) {
       startChatCollection();
     } else if (changed) {
+      chatSendQueue.length = 0;
       stopChatCollection();
     }
 
@@ -732,30 +838,36 @@
         type: 'SET_ENABLED',
         enabled: isEnabled
       });
+      broadcastToChatFrame({
+        type: 'AI_STATE_CHANGED',
+        enabled: isEnabled
+      });
+    }
+  }
 
-      const chatFrame = document.querySelector(
-        'iframe#chatframe, ytd-live-chat-frame iframe'
-      );
+  function setAutoReplyEnabled(nextState, { broadcast = false } = {}) {
+    const normalized = Boolean(nextState);
+    const changed = isAutoReplyEnabled !== normalized;
 
-      if (chatFrame?.contentWindow) {
-        let targetOrigin = window.location.origin;
-        try {
-          if (chatFrame.src) {
-            targetOrigin = new URL(chatFrame.src, window.location.href).origin;
-          }
-        } catch (_) {
-          // Fallback to current origin if URL parsing fails.
-        }
+    isAutoReplyEnabled = normalized;
 
-        chatFrame.contentWindow.postMessage(
-          {
-            source: 'livestream-ai-extension',
-            type: 'AI_STATE_CHANGED',
-            enabled: isEnabled
-          },
-          targetOrigin
-        );
-      }
+    document
+      .querySelector(`#${PANEL_ID} .livestream-ai-menuitem[data-toggle="auto-reply"]`)
+      ?.setAttribute('aria-checked', String(isAutoReplyEnabled));
+
+    if (!isAutoReplyEnabled) {
+      chatSendQueue.length = 0;
+    }
+
+    if (broadcast && changed) {
+      sendRuntimeMessage({
+        type: 'SET_AUTO_REPLY',
+        autoReply: isAutoReplyEnabled
+      });
+      broadcastToChatFrame({
+        type: 'AI_AUTO_REPLY_CHANGED',
+        autoReply: isAutoReplyEnabled
+      });
     }
   }
 
@@ -766,6 +878,8 @@
     chrome.runtime.onMessage.addListener((req) => {
       if (req?.type === 'AI_STATE_CHANGED') {
         setAssistantEnabled(req.enabled);
+      } else if (req?.type === 'AI_AUTO_REPLY_CHANGED') {
+        setAutoReplyEnabled(req.autoReply);
       }
     });
   } catch (_) {
@@ -780,10 +894,13 @@
     if (
       isTrustedYouTubeOrigin(e.origin) &&
       (e.source === window.top || e.source === chatFrameWindow) &&
-      e.data?.source === 'livestream-ai-extension' &&
-      e.data?.type === 'AI_STATE_CHANGED'
+      e.data?.source === 'livestream-ai-extension'
     ) {
-      setAssistantEnabled(e.data.enabled);
+      if (e.data?.type === 'AI_STATE_CHANGED') {
+        setAssistantEnabled(e.data.enabled);
+      } else if (e.data?.type === 'AI_AUTO_REPLY_CHANGED') {
+        setAutoReplyEnabled(e.data.autoReply);
+      }
     }
   });
 
@@ -820,8 +937,13 @@
     sendRuntimeMessage(
       { type: 'GET_ENABLED' },
       (res, error) => {
-        if (!error && typeof res?.enabled === 'boolean') {
-          setAssistantEnabled(res.enabled);
+        if (!error) {
+          if (typeof res?.enabled === 'boolean') {
+            setAssistantEnabled(res.enabled);
+          }
+          if (typeof res?.autoReply === 'boolean') {
+            setAutoReplyEnabled(res.autoReply);
+          }
         }
       }
     );
@@ -887,6 +1009,7 @@
       const item = el('div', 'livestream-ai-menuitem');
 
       item.setAttribute('role', 'menuitemcheckbox');
+      item.dataset.toggle = 'collector';
       item.setAttribute('aria-checked', String(isEnabled));
       item.tabIndex = 0;
 
@@ -897,7 +1020,7 @@
       );
 
       item.append(
-        el('div', 'livestream-ai-menuitem-label', 'Enable'),
+        el('div', 'livestream-ai-menuitem-label', 'Enable Collector'),
         track
       );
 
@@ -915,6 +1038,34 @@
         if (e.key === ' ' || e.key === 'Enter') {
           e.preventDefault();
           toggle(e);
+        }
+      });
+
+      const autoReplyItem = el('div', 'livestream-ai-menuitem');
+      autoReplyItem.setAttribute('role', 'menuitemcheckbox');
+      autoReplyItem.dataset.toggle = 'auto-reply';
+      autoReplyItem.setAttribute('aria-checked', String(isAutoReplyEnabled));
+      autoReplyItem.tabIndex = 0;
+
+      const autoReplyTrack = el('div', 'livestream-ai-toggle-track');
+      autoReplyTrack.appendChild(el('div', 'livestream-ai-toggle-thumb'));
+      autoReplyItem.append(
+        el('div', 'livestream-ai-menuitem-label', 'Auto-Reply in Chat'),
+        autoReplyTrack
+      );
+
+      const toggleAutoReply = (e) => {
+        e.stopPropagation();
+        setAutoReplyEnabled(!isAutoReplyEnabled, {
+          broadcast: true
+        });
+      };
+
+      autoReplyItem.addEventListener('click', toggleAutoReply);
+      autoReplyItem.addEventListener('keydown', (e) => {
+        if (e.key === ' ' || e.key === 'Enter') {
+          e.preventDefault();
+          toggleAutoReply(e);
         }
       });
 
@@ -957,12 +1108,15 @@
         }
       });
 
-      panel.append(item, dashboardItem);
+      panel.append(item, autoReplyItem, dashboardItem);
       playerContainer.appendChild(panel);
     } else {
       panel
-        .querySelector('.livestream-ai-menuitem[role="menuitemcheckbox"]')
+        .querySelector('.livestream-ai-menuitem[data-toggle="collector"]')
         ?.setAttribute('aria-checked', String(isEnabled));
+      panel
+        .querySelector('.livestream-ai-menuitem[data-toggle="auto-reply"]')
+        ?.setAttribute('aria-checked', String(isAutoReplyEnabled));
     }
 
     button.addEventListener('click', (e) => {

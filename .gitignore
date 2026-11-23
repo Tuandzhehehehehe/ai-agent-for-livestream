@@ -8,3 +8,4 @@ dist/
 .env
 .env.*
 !.env.example
+backend/database/.local_db/
