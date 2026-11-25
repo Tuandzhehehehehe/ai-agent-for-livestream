@@ -668,6 +668,106 @@ class LivestreamEndToEndTests(unittest.TestCase):
             self.assertEqual(cancel_res.status_code, 200)
             self.assertEqual(cancel_res.json()["order"]["status"], "cancelled")
 
+    def test_vietnamese_homophone_quantities_and_bidirectional_address_splitting(self) -> None:
+        facade = build_repository_backed_facade()
+        ctx = TenantContext.system_context("default-store")
+        run_coroutine_sync(seed_demo_store_data(facade, ctx, session_id="youtube-live"))
+        app = create_app(db_facade=facade)
+
+        with InProcessAppClient(app) as client:
+            # 1. Vietnamese homophones ("không" in "mic không dây" / "được không", "ba" = dad, "nam" = male/South, "sau" = later)
+            homophone_cases = [
+                ("homo-1", "mua mic không dây", "SYN-PROD-010", 1),
+                ("homo-2", "chốt đèn bàn được không shop?", "SYN-PROD-001", 1),
+                ("homo-3", "mua đèn bàn tặng ba mẹ", "SYN-PROD-001", 1),
+                ("homo-4", "mua khăn choàng cho nam", "SYN-PROD-005", 1),
+                ("homo-5", "mua khan choang cho nam", "SYN-PROD-005", 1),
+                ("homo-6", "mua đèn bàn hôm sau giao nhé", "SYN-PROD-001", 1),
+                ("homo-7", "mua hai cái đèn bàn", "SYN-PROD-001", 2),
+                ("homo-8", "chốt ba cái cốc sứ", "SYN-PROD-002", 3),
+                ("homo-9", "mua năm cái quạt cầm tay", "SYN-PROD-009", 5),
+                ("homo-10", "mua nam cai quat cam tay", "SYN-PROD-009", 5),
+                ("homo-11", "dat sau cai binh giu nhiet", "SYN-PROD-012", 6),
+            ]
+            for cid, text, expected_pid, expected_qty in homophone_cases:
+                res = client.post(
+                    "/api/plugin/comments",
+                    json={
+                        "id": cid,
+                        "sender": f"@HomoBuyer_{cid}",
+                        "text": text,
+                        "authorType": "viewer",
+                        "timestamp": 1791568990000,
+                    },
+                ).json()
+                self.assertIsNotNone(res["auto_order"], f"Order should be created for: {text}")
+                self.assertEqual(res["auto_order"]["items"][0]["product_id"], expected_pid)
+                self.assertEqual(
+                    res["auto_order"]["items"][0]["quantity"],
+                    expected_qty,
+                    f"Homophone mis-parsed quantity for: {text}",
+                )
+
+            # 2. Address written BEFORE product/quantity ("Địa chỉ ..., chốt 2 đèn bàn", "Giao tới ... cho mình 2 cốc sứ")
+            addr_first_1 = client.post(
+                "/api/plugin/comments",
+                json={
+                    "id": "addr-first-1",
+                    "sender": "@AddrFirstBuyer1",
+                    "text": "Địa chỉ: 123 Nguyễn Huệ, Quận 1, TP HCM, SĐT 0912345678, chốt 2 đèn bàn",
+                    "authorType": "viewer",
+                    "timestamp": 1791568995000,
+                },
+            ).json()
+            self.assertIsNotNone(addr_first_1["auto_order"])
+            self.assertEqual(addr_first_1["auto_order"]["status"], "confirmed")
+            self.assertEqual(addr_first_1["auto_order"]["items"][0]["product_id"], "SYN-PROD-001")
+            self.assertEqual(addr_first_1["auto_order"]["items"][0]["quantity"], 2)
+            self.assertEqual(
+                addr_first_1["auto_order"]["shipping_address"],
+                "123 Nguyễn Huệ, Quận 1, TP HCM (Phone: 0912345678)",
+            )
+
+            addr_first_2 = client.post(
+                "/api/plugin/comments",
+                json={
+                    "id": "addr-first-2",
+                    "sender": "@AddrFirstBuyer2",
+                    "text": "Giao tới 15 Lê Lợi Quận 1 cho mình 2 cốc sứ và 1 đèn bàn SĐT 0912345678",
+                    "authorType": "viewer",
+                    "timestamp": 1791568996000,
+                },
+            ).json()
+            self.assertIsNotNone(addr_first_2["auto_order"])
+            self.assertEqual(addr_first_2["auto_order"]["status"], "confirmed")
+            self.assertEqual(len(addr_first_2["auto_order"]["items"]), 2)
+            self.assertEqual(addr_first_2["auto_order"]["items"][0]["product_id"], "SYN-PROD-002")
+            self.assertEqual(addr_first_2["auto_order"]["items"][0]["quantity"], 2)
+            self.assertEqual(addr_first_2["auto_order"]["items"][1]["product_id"], "SYN-PROD-001")
+            self.assertEqual(addr_first_2["auto_order"]["items"][1]["quantity"], 1)
+            self.assertEqual(
+                addr_first_2["auto_order"]["shipping_address"],
+                "15 Lê Lợi Quận 1 (Phone: 0912345678)",
+            )
+
+            # 3. Deferred address ("mua 1 đèn bàn, địa chỉ mình nhắn sau nhé") must stay pending (not save "mình nhắn sau nhé" as address)
+            deferred_addr = client.post(
+                "/api/plugin/comments",
+                json={
+                    "id": "addr-deferred-1",
+                    "sender": "@DeferredBuyer",
+                    "text": "mua 1 đèn bàn, địa chỉ mình nhắn sau nhé",
+                    "authorType": "viewer",
+                    "timestamp": 1791568997000,
+                },
+            ).json()
+            self.assertIsNotNone(deferred_addr["auto_order"])
+            self.assertEqual(deferred_addr["auto_order"]["status"], "pending")
+            self.assertEqual(deferred_addr["auto_order"]["items"][0]["quantity"], 1)
+            self.assertTrue(
+                deferred_addr["auto_order"]["shipping_address"].startswith("Pending")
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

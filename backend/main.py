@@ -212,7 +212,8 @@ _NEGATIVE_ORDER_PATTERN = re.compile(
     r"|\b(?:buy|order|purchase)\s+(?:something|anything)?\s*later\b"
     r"|\b(?:maybe\s+later|give\s+me\s+a\s+(?:shoutout|hand|break|second|minute))\b"
     r"|\b(?:đừng|dung|không|khong|chưa|chua|chẳng|chang|ko|k)\s*(?:muốn\s+|muon\s+|nên\s+|nen\s+|định\s+|dinh\s+|cần\s+|can\s+)?(?:mua|chốt|chot|đặt|dat|lấy|lay)\b"
-    r"|\b(?:phân\s+vân|phan\s+van|suy\s+nghĩ\s+thêm|suy\s+nghi\s+them|mua\s+sau|đặt\s+sau|dat\s+sau)\b",
+    r"|\b(?:phân\s+vân|phan\s+van|suy\s+nghĩ\s+thêm|suy\s+nghi\s+them)\b"
+    r"|\b(?:mua|đặt|dat)\s+sau(?!\s+(?:cái|cai|chiếc|chiec|hộp|hop|bình|binh|cây|cay|thỏi|thoi|bộ|bo|túi|tui|ly|cốc|coc|đèn|den|quạt|quat|khăn|khan|son|mic|ấm|am|bột|bot|củ|cu|sạc|sac)\b)\b",
     re.IGNORECASE,
 )
 _PAST_OR_INQUIRY_ORDER_PATTERN = re.compile(
@@ -225,8 +226,20 @@ _INFO_INQUIRY_PATTERN = re.compile(
     re.IGNORECASE,
 )
 _PHONE_PATTERN = re.compile(r"(?<!\d)(?:\+84|0)\d(?:[\s.\-]?\d){7,9}(?!\d)")
-_ADDRESS_MARKER_PATTERN = re.compile(
-    r"(?:\b(?:địa\s+chỉ|dia\s+chi|đ/c|d/c|address|giao\s+tới|giao\s+toi|giao\s+đến|giao\s+den|giao\s+về|giao\s+ve|ship\s+to|ship\s+tới|ship\s+toi|nhận\s+tại|nhan\s+tai)\b)\s*[:\-]?\s*(.+)$",
+_ADDRESS_MARKER_START_PATTERN = re.compile(
+    r"\b(?:địa\s+chỉ|dia\s+chi|đ/c|d/c|address|giao\s+tới|giao\s+toi|giao\s+đến|giao\s+den|giao\s+về|giao\s+ve|ship\s+to|ship\s+tới|ship\s+toi|nhận\s+tại|nhan\s+tai)\b\s*[:\-]?\s*",
+    re.IGNORECASE,
+)
+_ORDER_CLAUSE_BOUNDARY_IN_ADDRESS_PATTERN = re.compile(
+    r"(?:[,;.\-]|\s)+\b(?:chốt|chot|chốt\s+đơn|chot\s+don|lên\s+đơn|len\s+don|mua|đặt|dat|đặt\s+hàng|dat\s+hang|lấy|lay|buy|purchase|order|checkout|book|i\s+want\s+to\s+(?:buy|order)|i'?ll\s+take|cho\s+(?:em|mình|minh|anh|chị|chi|tôi|toi|shop)\s+(?:mua|đặt|dat|lấy|lay|chốt|chot|\d+|một|mot|hai|ba|bốn|bon|năm|nam))\b",
+    re.IGNORECASE,
+)
+_DEFERRED_OR_INVALID_ADDRESS_PATTERN = re.compile(
+    r"\b(?:nhắn\s+sau|nhan\s+sau|gửi\s+sau|gui\s+sau|bổ\s+sung\s+sau|bo\s+sung\s+sau|inbox|ib\b|nhắn\s+riêng|nhan\s+rieng|chưa\s+có|chua\s+co|shop\s+ở\s+đâu|shop\s+o\s+dau|ở\s+đâu\s+vậy|o\s+dau\s+vay)\b",
+    re.IGNORECASE,
+)
+_ADDRESS_LOCATION_HINT_PATTERN = re.compile(
+    r"\b(?:quận|quan|q\.?\d+|phường|phuong|p\.?\d+|huyện|huyen|tỉnh|tinh|tp\.?|hcm|hà\s+nội|ha\s+noi|đà\s+nẵng|da\s+nang|đường|duong|phố|pho|ngõ|ngo|hẻm|hem|số\s+nhà|so\s+nha|street|st|dist|district|ward|city)\b",
     re.IGNORECASE,
 )
 _FAN_PERSON_IDIOM_PATTERN = re.compile(
@@ -251,7 +264,7 @@ _PRODUCT_ALIASES: dict[str, tuple[str, ...]] = {
     "SYN-PROD-011": ("matcha glow", "collagen powder", "matcha", "collagen", "bột matcha", "bot matcha", "bột collagen", "bot collagen"),
     "SYN-PROD-012": ("solaris", "insulated bottle", "thermal flask", "bottle", "bình giữ nhiệt", "binh giu nhiet"),
 }
-_WORD_QTY: dict[str, int] = {
+_EN_WORD_QTY: dict[str, int] = {
     "zero": 0,
     "one": 1,
     "two": 2,
@@ -263,25 +276,28 @@ _WORD_QTY: dict[str, int] = {
     "eight": 8,
     "nine": 9,
     "ten": 10,
-    "không": 0,
-    "khong": 0,
+}
+_VI_ACCENTED_WORD_QTY: dict[str, int] = {
     "một": 1,
+    "hai": 2,
+    "bốn": 4,
+    "năm": 5,
+    "sáu": 6,
+    "bảy": 7,
+    "tám": 8,
+    "chín": 9,
+    "mười": 10,
+}
+_VI_UNACCENTED_WORD_QTY: dict[str, int] = {
     "mot": 1,
     "hai": 2,
     "ba": 3,
-    "bốn": 4,
     "bon": 4,
-    "năm": 5,
     "nam": 5,
-    "sáu": 6,
     "sau": 6,
-    "bảy": 7,
     "bay": 7,
-    "tám": 8,
     "tam": 8,
-    "chín": 9,
     "chin": 9,
-    "mười": 10,
     "muoi": 10,
 }
 
@@ -313,12 +329,62 @@ def _extract_phone_number(text: str) -> str | None:
     return normalized
 
 
-def _extract_shipping_address(text: str) -> str | None:
-    m = _ADDRESS_MARKER_PATTERN.search(text)
+def _locate_address_span(text: str) -> tuple[str | None, tuple[int, int] | None]:
+    """Locate (cleaned_shipping_address, (span_start, span_end)) without swallowing trailing product clauses."""
+    m = _ADDRESS_MARKER_START_PATTERN.search(text)
     if not m:
-        return None
-    raw_addr = m.group(1)
-    # Remove embedded phone numbers and phone labels from the address string
+        return None, None
+
+    marker_start = m.start()
+    content_start = m.end()
+    tail = text[content_start:]
+    cut_idx = len(tail)
+
+    # 1. Stop if an explicit order action verb starts a new clause after the address
+    for candidate_tail in (tail, _strip_accents(tail)):
+        b_match = _ORDER_CLAUSE_BOUNDARY_IN_ADDRESS_PATTERN.search(candidate_tail)
+        if b_match and b_match.start() > 0:
+            cut_idx = min(cut_idx, b_match.start())
+
+    # 2. Stop if a comma/semicolon is followed by a product segment that is not an address part
+    dataset = load_synthetic_data()
+    for cm in re.finditer(r"[,;]+", tail[:cut_idx]):
+        if cm.start() < 3:
+            continue
+        after_delim = tail[cm.end() : cut_idx]
+        first_piece = re.split(r"[,;]", after_delim)[0].strip()
+        if not first_piece:
+            continue
+        if not _ADDRESS_LOCATION_HINT_PATTERN.search(first_piece) and not _ADDRESS_LOCATION_HINT_PATTERN.search(
+            _strip_accents(first_piece)
+        ):
+            if _match_product_in_segment(first_piece, dataset.products, full_text=first_piece) is not None:
+                cut_idx = min(cut_idx, cm.start())
+                break
+
+    # 3. Stop if an undelimited "<qty><unit> <product>" phrase follows the address (e.g. "Ship tới 88 Lý Tự Trọng 2 cái đèn bàn")
+    undelim_qty_pattern = re.compile(
+        r"\s+(?:\d+\s*(?:x|c|cái|cai|chiếc|chiec|hộp|hop|bình|binh|cây|cay|thỏi|thoi|bộ|bo|túi|tui|ly|cốc|coc)\b"
+        r"|(?:một|mot|hai|ba|bốn|bon|năm|nam|sáu|sau)\s+(?:cái|cai|chiếc|chiec|hộp|hop|bình|binh|cây|cay|thỏi|thoi|bộ|bo|túi|tui|ly|cốc|coc)\b)",
+        re.IGNORECASE,
+    )
+    for qm in undelim_qty_pattern.finditer(tail[:cut_idx]):
+        if qm.start() < 5:
+            continue
+        trailing_seg = tail[qm.start() : cut_idx].strip()
+        if _match_product_in_segment(trailing_seg, dataset.products, full_text=trailing_seg) is not None:
+            cut_idx = min(cut_idx, qm.start())
+            break
+
+    raw_addr = tail[:cut_idx]
+    span = (marker_start, content_start + cut_idx)
+
+    # Check if the viewer is deferring or asking for the shop's address ("địa chỉ mình nhắn sau nhé")
+    if _DEFERRED_OR_INVALID_ADDRESS_PATTERN.search(raw_addr) or _DEFERRED_OR_INVALID_ADDRESS_PATTERN.search(
+        _strip_accents(raw_addr)
+    ):
+        return None, span
+
     cleaned_addr = _PHONE_PATTERN.sub(" ", raw_addr)
     cleaned_addr = re.sub(
         r"\b(?:sđt|sdt|số\s+điện\s+thoại|so\s+dien\s+thoai|điện\s+thoại|dien\s+thoai|phone|tel|liên\s+hệ|lien\s+he)\b\s*[:\-]?",
@@ -327,12 +393,22 @@ def _extract_shipping_address(text: str) -> str | None:
         flags=re.IGNORECASE,
     )
     cleaned_addr = re.sub(r"\s+", " ", cleaned_addr).strip(" ,;:-.")
-    return cleaned_addr if len(cleaned_addr) >= 3 else None
+    return (cleaned_addr if len(cleaned_addr) >= 3 else None), span
+
+
+def _extract_shipping_address(text: str) -> str | None:
+    addr_val, _ = _locate_address_span(text)
+    return addr_val
 
 
 def _strip_shipping_and_phone_spans(text: str) -> str:
-    """Remove address and phone sections from order text before splitting product clauses or extracting quantities."""
-    without_addr = _ADDRESS_MARKER_PATTERN.sub(" ", text)
+    """Remove only the address span and phone numbers from order text while preserving product clauses before and after."""
+    _, addr_span = _locate_address_span(text)
+    if addr_span is not None:
+        s_idx, e_idx = addr_span
+        without_addr = f"{text[:s_idx]} , {text[e_idx:]}"
+    else:
+        without_addr = text
     without_phone = _PHONE_PATTERN.sub(" ", without_addr)
     without_labels = re.sub(
         r"\b(?:sđt|sdt|số\s+điện\s+thoại|so\s+dien\s+thoai|điện\s+thoại|dien\s+thoai|phone|tel|địa\s+chỉ|dia\s+chi)\b\s*[:\-]?",
@@ -340,7 +416,7 @@ def _strip_shipping_and_phone_spans(text: str) -> str:
         without_phone,
         flags=re.IGNORECASE,
     )
-    # Remove trailing location qualifiers like "ở quận 3", "quận 1", "q1"
+    # Remove standalone location qualifiers like "ở quận 3", "quận 1", "q1"
     without_loc = re.sub(
         r"\b(?:ở|o|tại|tai)?\s*(?:quận|quan|q\.?|phường|phuong|p\.?|huyện|huyen)\s*\d+[a-z]?\b",
         " ",
@@ -425,7 +501,36 @@ def _find_all_products_in_text(text: str, products: tuple[Any, ...]) -> list[Any
     return [p for _, p in found]
 
 
-def _extract_quantity_from_segment(segment: str) -> tuple[int, bool]:
+def _find_product_span_in_segment(segment: str, product: Any | None) -> tuple[int, int] | None:
+    if product is None:
+        return None
+    lowered = segment.casefold()
+    unaccented = _strip_accents(lowered)
+    prod_name_low = product.name.casefold()
+    pos = lowered.find(prod_name_low)
+    if pos != -1:
+        return (pos, pos + len(prod_name_low))
+    id_low = product.id.casefold()
+    id_pos = lowered.find(id_low)
+    if id_pos != -1:
+        return (id_pos, id_pos + len(id_low))
+    best_span: tuple[int, int] | None = None
+    best_len = 0
+    for alias in _PRODUCT_ALIASES.get(product.id, ()):
+        m = re.search(rf"\b{re.escape(alias)}\b", lowered)
+        if not m:
+            alias_unacc = _strip_accents(alias)
+            m = re.search(rf"\b{re.escape(alias_unacc)}\b", unaccented)
+        if m and len(alias) > best_len:
+            best_span = (m.start(), m.end())
+            best_len = len(alias)
+    return best_span
+
+
+def _extract_quantity_from_segment(
+    segment: str,
+    product: Any | None = None,
+) -> tuple[int, bool]:
     """Return (quantity, is_valid). Numbers outside 1..20 return (raw_num, False)."""
     cleaned_seg = _strip_shipping_and_phone_spans(segment).casefold()
     # Strip product IDs (e.g. SYN-PROD-007), SKUs, order IDs, and technical specs (e.g. 65W, 500ml)
@@ -442,7 +547,7 @@ def _extract_quantity_from_segment(segment: str) -> tuple[int, bool]:
         flags=re.IGNORECASE,
     )
 
-    # Match numbers with optional unit/multiplier suffix like "2x", "x2", "3c", "3 cái", "2 chiếc"
+    # 1. Match Arabic digits with optional unit/multiplier suffix like "2x", "x2", "3c", "3 cái", "2 chiếc"
     x_prefix_match = re.search(r"(?<![A-Za-z0-9_-])x\s*(-?\d+)\b", cleaned_seg)
     num_matches = re.findall(
         r"(?<![A-Za-z0-9_-])(-?\d+)(?:\s*(?:x|c|cái|cai|chiếc|chiec|sp|món|mon|hộp|hop|bình|binh|cây|cay|thỏi|thoi|bộ|bo|túi|tui|ly|cốc|coc))?(?![A-Za-z0-9_-])",
@@ -459,14 +564,71 @@ def _extract_quantity_from_segment(segment: str) -> tuple[int, bool]:
             return parsed_num, True
         return parsed_num, False
 
-    unacc_seg = _strip_accents(cleaned_seg)
-    for word, val in _WORD_QTY.items():
-        if re.search(rf"\b{re.escape(word)}\b", cleaned_seg) or re.search(
-            rf"\b{re.escape(word)}\b", unacc_seg
+    # 2. Context-aware Word Quantity extraction (only in quantifier position before the product, avoiding Vietnamese homophones!)
+    prod_span = _find_product_span_in_segment(cleaned_seg, product)
+    before_prod = cleaned_seg[: prod_span[0]] if prod_span is not None else cleaned_seg
+    # Remove non-quantity homophone phrases ("cho ba", "tặng ba", "cho nam", "hôm sau", "trả sau", "ngã ba", "không dây")
+    before_prod = re.sub(
+        r"\b(?:cho|tặng|tang|biếu|bieu|của|cua|gửi|gui)\s+(?:ba\s+mẹ|ba\s+me|ba\s+má|ba\s+ma|ba|nam)\b",
+        " ",
+        before_prod,
+        flags=re.IGNORECASE,
+    )
+    before_prod = re.sub(
+        r"\b(?:hôm|hom|lần|lan|bữa|bua|tuần|tuan|tháng|thang|cổng|cong|phía|phia|đằng|dang|trả|tra|giao|nhận|nhan)\s+sau\b"
+        r"|\b(?:miền|mien|việt|viet|phía|phia)\s+nam\b"
+        r"|\b(?:ngã|nga|thứ|thu)\s+ba\b"
+        r"|\b(?:sân|san)\s+bay\b",
+        " ",
+        before_prod,
+        flags=re.IGNORECASE,
+    )
+    before_prod = re.sub(r"\s+", " ", before_prod).strip()
+
+    # 2a. Explicit zero quantity ("buy zero <prod>", "mua không [cái] <prod>")
+    if re.search(r"\b(?:buy|order|take|purchase)\s+zero\s*$", before_prod) or re.search(
+        r"\b(?:mua|chốt|chot|đặt|dat|lấy|lay|lên\s+đơn|len\s+don|số\s+lượng|so\s+luong)\s+(?:không|khong)(?:\s+(?:cái|cai|chiếc|chiec|hộp|hop|bình|binh|cây|cay|thỏi|thoi|bộ|bo|túi|tui|ly|cốc|coc|sp|sản\s*phẩm|san\s*pham|món|mon))?\s*$",
+        before_prod,
+    ):
+        return 0, False
+
+    # 2b. English word quantities (one..ten) before product
+    for en_word, val in _EN_WORD_QTY.items():
+        if en_word == "zero":
+            continue
+        if re.search(rf"\b{re.escape(en_word)}\b", before_prod):
+            return val, True
+
+    # 2c. Accented Vietnamese number words (một, hai, bốn, năm, sáu, bảy, tám, chín, mười) before product
+    for vi_word, val in _VI_ACCENTED_WORD_QTY.items():
+        if re.search(
+            rf"(?:^\s*|\b(?:mua|chốt|chot|đặt|dat|lấy|lay|lên\s+đơn|len\s+don|cho\s+\S+|và|va|với|voi|kèm|kem|thêm|them)\s+){re.escape(vi_word)}(?:\s+(?:cái|cai|chiếc|chiec|hộp|hop|bình|binh|cây|cay|thỏi|thoi|bộ|bo|túi|tui|ly|cốc|coc|sp|sản\s*phẩm|món|mon))?\s*$",
+            before_prod,
         ):
-            if 1 <= val <= 20:
+            return val, True
+
+    # 2d. Homophone-sensitive "ba" (3) and unaccented Vietnamese number words (mot..muoi)
+    # If the original segment has Vietnamese diacritics, do NOT coerce unaccented "nam"/"sau" into "năm"(5)/"sáu"(6)
+    has_diacritics = bool(
+        re.search(
+            r"[àáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđ]",
+            segment.casefold(),
+        )
+    )
+    if re.search(
+        r"(?:^\s*|\b(?:mua|chốt|chot|đặt|dat|lấy|lay|lên\s+đơn|len\s+don|cho\s+(?:em|mình|minh|anh|chị|chi|tôi|toi|shop)|và|va|với|voi|kèm|kem|thêm|them)\s+)ba(?:\s+(?:cái|cai|chiếc|chiec|hộp|hop|bình|binh|cây|cay|thỏi|thoi|bộ|bo|túi|tui|ly|cốc|coc|sp|sản\s*phẩm|món|mon))?\s*$",
+        before_prod,
+    ):
+        return 3, True
+
+    if not has_diacritics:
+        unacc_before = _strip_accents(before_prod)
+        for unacc_word, val in _VI_UNACCENTED_WORD_QTY.items():
+            if re.search(
+                rf"(?:^\s*|\b(?:mua|chot|dat|lay|len\s+don|cho\s+(?:em|minh|anh|chi|toi|shop)|va|voi|kem|them)\s+){re.escape(unacc_word)}(?:\s+(?:cai|chiec|hop|binh|cay|thoi|bo|tui|ly|coc|sp|san\s*pham|mon))?\s*$",
+                unacc_before,
+            ):
                 return val, True
-            return val, False
 
     return 1, True
 
@@ -496,7 +658,7 @@ def _parse_order_request(text: str) -> OrderParseAttempt | None:
         )
     ):
         return None
-    if _NEGATIVE_ORDER_PATTERN.search(lowered) or _NEGATIVE_ORDER_PATTERN.search(unaccented):
+    if _NEGATIVE_ORDER_PATTERN.search(lowered):
         return None
     if _PAST_OR_INQUIRY_ORDER_PATTERN.search(lowered) or _PAST_OR_INQUIRY_ORDER_PATTERN.search(unaccented):
         return None
@@ -522,7 +684,7 @@ def _parse_order_request(text: str) -> OrderParseAttempt | None:
         prod = _match_product_in_segment(clause, dataset.products, full_text=cleaned)
         if prod is None:
             continue
-        qty, is_valid = _extract_quantity_from_segment(clause)
+        qty, is_valid = _extract_quantity_from_segment(clause, product=prod)
         if not is_valid:
             is_vi = _is_vietnamese_text(cleaned)
             reason = (
@@ -547,7 +709,7 @@ def _parse_order_request(text: str) -> OrderParseAttempt | None:
         prod = _match_product_in_segment(order_core, dataset.products, full_text=cleaned)
         if prod is None:
             return None
-        qty, is_valid = _extract_quantity_from_segment(order_core)
+        qty, is_valid = _extract_quantity_from_segment(order_core, product=prod)
         if not is_valid:
             is_vi = _is_vietnamese_text(cleaned)
             reason = (
