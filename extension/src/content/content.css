@@ -294,6 +294,87 @@
   color: #a7f3d0;
 }
 
+#livestream-ai-detail-popover .livestream-ai-popover-badge.is-error {
+  background: rgba(239, 68, 68, 0.35);
+  color: #fecaca;
+}
+
+#livestream-ai-message-row .livestream-ai-chip-status {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 15px;
+  height: 15px;
+  padding: 0 3px;
+  border-radius: 999px;
+  font-size: 9px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+#livestream-ai-message-row .livestream-ai-chip-status.is-sent {
+  background: rgba(16, 185, 129, 0.35);
+  color: #a7f3d0;
+}
+
+#livestream-ai-message-row .livestream-ai-chip-status.is-failed {
+  background: rgba(239, 68, 68, 0.45);
+  color: #fecaca;
+}
+
+#livestream-ai-message-row .livestream-ai-chip-status.is-blocked_or_restricted {
+  background: rgba(245, 158, 11, 0.4);
+  color: #fde68a;
+}
+
+#livestream-ai-message-row .livestream-ai-chip-status.is-queued {
+  background: rgba(148, 163, 184, 0.35);
+  color: #e2e8f0;
+}
+
+#livestream-ai-chat-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  background: #1e1b2e;
+  border-bottom: 1px solid rgba(128, 101, 201, 0.4);
+  font-family: "YouTube Noto", Roboto, Arial, Helvetica, sans-serif;
+  font-size: 11px;
+  color: #F0EAFF;
+  flex-shrink: 0;
+}
+
+#livestream-ai-chat-toolbar .livestream-ai-toolbar-brand {
+  font-weight: 700;
+  color: #c4b5fd;
+  margin-right: 2px;
+}
+
+#livestream-ai-chat-toolbar .livestream-ai-toolbar-toggle,
+#livestream-ai-chat-toolbar .livestream-ai-toolbar-dash {
+  border: 1px solid rgba(128, 101, 201, 0.55);
+  background: rgba(41, 36, 66, 0.75);
+  color: #e2e8f0;
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  line-height: 1.4;
+}
+
+#livestream-ai-chat-toolbar .livestream-ai-toolbar-toggle[aria-pressed="true"] {
+  background: #7c3aed;
+  border-color: #c4b5fd;
+  color: #ffffff;
+}
+
+#livestream-ai-chat-toolbar .livestream-ai-toolbar-dash {
+  margin-left: auto;
+  color: #c4b5fd;
+}
+
 #livestream-ai-detail-popover .livestream-ai-popover-close {
   border: 0;
   background: transparent;

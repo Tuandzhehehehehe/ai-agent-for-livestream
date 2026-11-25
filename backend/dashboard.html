@@ -6,7 +6,6 @@
   <title>Livestream AI Multi-Agent & RAG Console (React 18)</title>
   <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-  <script crossorigin src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
   <style>
     * { box-sizing: border-box; }
     body {
@@ -27,340 +26,622 @@
     input { flex: 1; padding: 8px 12px; border-radius: 8px; border: 1px solid #475569; background: #0f172a; color: #f8fafc; }
     button { padding: 8px 16px; border-radius: 8px; border: 0; background: #7c3aed; color: #fff; font-weight: 600; cursor: pointer; }
     button.secondary { background: #2563eb; }
+    button.action-confirm { padding: 4px 10px; font-size: 11px; border-radius: 6px; background: #059669; color: #fff; }
+    button.action-cancel { padding: 4px 10px; font-size: 11px; border-radius: 6px; background: #dc2626; color: #fff; }
+    button:disabled { opacity: 0.55; cursor: not-allowed; }
   </style>
 </head>
 <body>
-  <div id="root"></div>
-  <script type="text/babel">
-    const { useState, useEffect } = React;
-
-    function HeaderBar({ health }) {
-      return (
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
-          <div>
-            <h1 style={{ margin: 0, fontSize: 24, color: '#c4b5fd' }}>
-              Livestream Sales Multi-Agent & RAG Console
-            </h1>
-            <p style={{ margin: '4px 0 0', color: '#94a3b8', fontSize: 13 }}>
-              React 18 JSX • Orchestrator: {health?.orchestrator_backend || 'stategraph'} • Vector RAG: {health?.vector_rag_backend || 'local_vector'} • Ollama: {health?.ollama_enabled ? 'enabled' : 'fallback mode'}
-            </p>
-          </div>
-          <span className="badge hot">
-            Mongo: {health?.mongo_status || 'n/a'} | Redis: {health?.redis_status || 'n/a'}
-          </span>
-        </div>
-      );
-    }
-
-    function KpiStatsRow({ summary, ordersCount }) {
-      return (
-        <div className="grid-4">
-          <div className="card">
-            <div style={{ fontSize: 12, color: '#94a3b8' }}>Total Comments</div>
-            <div style={{ fontSize: 28, fontWeight: 700 }}>{summary?.comment_count ?? 0}</div>
-          </div>
-          <div className="card">
-            <div style={{ fontSize: 12, color: '#94a3b8' }}>Hot Buyer Leads</div>
-            <div style={{ fontSize: 28, fontWeight: 700, color: '#34d399' }}>{summary?.hot_lead_count ?? 0}</div>
-          </div>
-          <div className="card">
-            <div style={{ fontSize: 12, color: '#94a3b8' }}>Needs Human Review</div>
-            <div style={{ fontSize: 28, fontWeight: 700, color: '#fbbf24' }}>{summary?.needs_human_review_count ?? 0}</div>
-          </div>
-          <div className="card">
-            <div style={{ fontSize: 12, color: '#94a3b8' }}>Livestream Orders (Auto + Demo)</div>
-            <div style={{ fontSize: 28, fontWeight: 700, color: '#a78bfa' }}>{ordersCount}</div>
-          </div>
-        </div>
-      );
-    }
-
-    function DatabaseDesignPanel({ dbOverview }) {
-      if (!dbOverview) return null;
-      return (
-        <div className="grid-2">
-          <div className="card">
-            <h3 style={{ marginTop: 0, color: '#ddd6fe' }}>
-              MongoDB: {dbOverview.database_name} ({dbOverview.total_collections} Collections)
-            </h3>
-            <div style={{ maxHeight: 240, overflowY: 'auto' }}>
-              {(dbOverview.collections || []).map((col, idx) => (
-                <div
-                  key={col.name}
-                  style={{
-                    padding: '6px 10px',
-                    background: '#0f172a',
-                    borderRadius: 6,
-                    marginTop: 5,
-                    fontSize: 12,
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                  }}
-                >
-                  <div>
-                    <strong style={{ color: '#c4b5fd' }}>{idx + 1}. {col.name}</strong>
-                    <span style={{ color: '#94a3b8', marginLeft: 8 }}>({col.model})</span>
-                  </div>
-                  <span className="badge hot">{col.document_count} docs</span>
-                </div>
-              ))}
-            </div>
-          </div>
-          <div className="card">
-            <h3 style={{ marginTop: 0, color: '#ddd6fe' }}>
-              Redis Infrastructure ({dbOverview.total_redis_patterns} Key Patterns)
-            </h3>
-            <div style={{ maxHeight: 240, overflowY: 'auto' }}>
-              {(dbOverview.redis_structures || []).map((rs) => (
-                <div
-                  key={rs.key_pattern}
-                  style={{ padding: '6px 10px', background: '#0f172a', borderRadius: 6, marginTop: 5, fontSize: 12 }}
-                >
-                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                    <code style={{ color: '#93c5fd' }}>{rs.key_pattern}</code>
-                    <span className="badge warm">{rs.data_structure}</span>
-                  </div>
-                  <div style={{ color: '#94a3b8', marginTop: 2, fontSize: 11 }}>{rs.purpose}</div>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      );
-    }
-
-    function DashboardApp() {
-      const [health, setHealth] = useState(null);
-      const [arch, setArch] = useState(null);
-      const [summary, setSummary] = useState(null);
-      const [comments, setComments] = useState([]);
-      const [products, setProducts] = useState([]);
-      const [orders, setOrders] = useState([]);
-      const [dbOverview, setDbOverview] = useState(null);
-      const [question, setQuestion] = useState('What is the price and stock of the Aurora Studio Ringlight?');
-      const [agentOutput, setAgentOutput] = useState(null);
-      const [ragQuery, setRagQuery] = useState('Aurora Studio Ringlight wireless microphone');
-      const [ragHits, setRagHits] = useState([]);
-
-      const refresh = async () => {
-        try {
-          const [h, a, s, c, p, o, db] = await Promise.all([
-            fetch('/health').then((r) => r.json()),
-            fetch('/api/agent/architecture').then((r) => r.json()),
-            fetch('/api/plugin/summary').then((r) => r.json()),
-            fetch('/api/plugin/comments?limit=20').then((r) => r.json()),
-            fetch('/api/store/products').then((r) => r.json()),
-            fetch('/api/store/orders').then((r) => r.json()),
-            fetch('/api/database/overview').then((r) => r.json()),
-          ]);
-          setHealth(h);
-          setArch(a);
-          setSummary(s);
-          setComments(c);
-          setProducts(p.items || []);
-          setOrders(o.items || []);
-          setDbOverview(db);
-        } catch (_) {}
-      };
-
-      useEffect(() => {
-        refresh();
-        const id = setInterval(refresh, 4000);
-        return () => clearInterval(id);
-      }, []);
-
-      const runAgent = async (ev) => {
-        ev.preventDefault();
-        if (!question.trim()) return;
-        const res = await fetch('/api/agent/chat', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ text: question, sender: 'OperatorTest', author_type: 'viewer' }),
-        });
-        if (res.ok) setAgentOutput(await res.json());
-      };
-
-      const runRag = async (ev) => {
-        ev.preventDefault();
-        if (!ragQuery.trim()) return;
-        const res = await fetch('/api/agent/rag/search', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ query: ragQuery, top_k: 4 }),
-        });
-        if (res.ok) {
-          const d = await res.json();
-          setRagHits(d.hits || []);
+  <div id="root">
+    <div class="container">
+      <h1 style="margin:0;font-size:24px;color:#c4b5fd">Livestream Sales Multi-Agent &amp; RAG Console</h1>
+    </div>
+  </div>
+  <script>
+    (function () {
+      // Built-in offline fallback runtime if CDN (unpkg.com) is unreachable during demo
+      function ensureReactRuntime() {
+        if (window.React && window.ReactDOM && window.ReactDOM.createRoot) {
+          return { React: window.React, ReactDOM: window.ReactDOM, mode: 'react18-cdn' };
         }
-      };
+        let hooks = [];
+        let hookCursor = 0;
+        let rootComponent = null;
+        let rootContainer = null;
 
-      return (
-        <div className="container">
-          <HeaderBar health={health} />
-          <KpiStatsRow summary={summary} ordersCount={orders.length} />
+        function createDomNode(vnode) {
+          if (vnode == null || vnode === false || vnode === true) return document.createTextNode('');
+          if (typeof vnode === 'string' || typeof vnode === 'number') {
+            return document.createTextNode(String(vnode));
+          }
+          if (Array.isArray(vnode)) {
+            const frag = document.createDocumentFragment();
+            vnode.forEach((child) => frag.appendChild(createDomNode(child)));
+            return frag;
+          }
+          if (typeof vnode.type === 'function') {
+            return createDomNode(vnode.type(vnode.props || {}));
+          }
+          const el = document.createElement(vnode.type);
+          const props = vnode.props || {};
+          Object.keys(props).forEach((k) => {
+            if (k === 'children' || k === 'key' || props[k] == null || props[k] === false) return;
+            if (k === 'className') {
+              el.className = props[k];
+            } else if (k === 'style' && typeof props[k] === 'object') {
+              Object.keys(props[k]).forEach((sk) => {
+                const val = props[k][sk];
+                el.style[sk] = typeof val === 'number' && sk !== 'fontWeight' && sk !== 'opacity' ? val + 'px' : val;
+              });
+            } else if (k.startsWith('on') && typeof props[k] === 'function') {
+              const evt = k.slice(2).toLowerCase();
+              el.addEventListener(evt === 'change' && el.tagName === 'INPUT' ? 'input' : evt, props[k]);
+            } else if (k === 'value' && el.tagName === 'INPUT') {
+              el.value = props[k];
+            } else if (k === 'disabled') {
+              el.disabled = Boolean(props[k]);
+            } else {
+              el.setAttribute(k, String(props[k]));
+            }
+          });
+          (props.children || []).flat(Infinity).forEach((c) => {
+            el.appendChild(createDomNode(c));
+          });
+          return el;
+        }
 
-          <div className="grid-2">
-            <div className="card">
-              <h3 style={{ marginTop: 0, color: '#ddd6fe' }}>Multi-Agent + Tool Calling Playground</h3>
-              <form onSubmit={runAgent} style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
-                <input value={question} onChange={(ev) => setQuestion(ev.target.value)} />
-                <button type="submit">Run Agents</button>
-              </form>
-              {agentOutput?.state && (
-                <div style={{ fontSize: 13 }}>
-                  <div style={{ padding: 10, borderRadius: 8, background: '#0f172a', marginBottom: 8 }}>
-                    <strong>Draft Reply: </strong>
-                    {agentOutput.state.answer_draft?.answer}
-                    <div style={{ marginTop: 6, color: '#a78bfa', fontSize: 12 }}>
-                      Intent: {agentOutput.state.intent} | Lead: {agentOutput.state.lead_label} ({agentOutput.state.lead_score}/100) | Tool: {agentOutput.state.selected_tool || 'none'}
-                    </div>
-                  </div>
-                  {(agentOutput.state.agent_trace || []).map((st, idx) => (
-                    <div key={idx} style={{ padding: '6px 8px', background: '#0f172a', borderRadius: 6, marginTop: 4 }}>
-                      <strong style={{ color: '#c4b5fd' }}>{st.agent}</strong>: {st.detail}
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
+        function rerender() {
+          if (!rootContainer || !rootComponent) return;
+          hookCursor = 0;
+          const tree = createDomNode(rootComponent());
+          rootContainer.replaceChildren(tree);
+        }
 
-            <div className="card">
-              <h3 style={{ marginTop: 0, color: '#ddd6fe' }}>Vector RAG Semantic Search</h3>
-              <form onSubmit={runRag} style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
-                <input value={ragQuery} onChange={(ev) => setRagQuery(ev.target.value)} />
-                <button type="submit" className="secondary">Search RAG</button>
-              </form>
-              {ragHits.map((h, idx) => (
-                <div key={idx} style={{ padding: 10, background: '#0f172a', borderRadius: 8, marginTop: 8, fontSize: 13 }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', color: '#93c5fd', fontWeight: 600 }}>
-                    <span>[{h.source_type}] {h.title} ({h.source_id})</span>
-                    <span>score: {h.score}</span>
-                  </div>
-                  <div style={{ marginTop: 4, color: '#cbd5e1' }}>{h.excerpt}</div>
-                </div>
-              ))}
-            </div>
-          </div>
+        const LocalReact = {
+          createElement(type, props, ...children) {
+            return { type, props: Object.assign({}, props || {}, { children }) };
+          },
+          useState(initial) {
+            const idx = hookCursor++;
+            if (!(idx in hooks)) hooks[idx] = initial;
+            const setState = (next) => {
+              hooks[idx] = typeof next === 'function' ? next(hooks[idx]) : next;
+              rerender();
+            };
+            return [hooks[idx], setState];
+          },
+          useEffect(fn, deps) {
+            const idx = hookCursor++;
+            const prev = hooks[idx];
+            const changed = !prev || !deps || deps.some((d, i) => d !== prev.deps[i]);
+            if (changed) {
+              hooks[idx] = { deps };
+              setTimeout(() => fn(), 0);
+            }
+          }
+        };
 
-          <div className="card" style={{ marginBottom: 20 }}>
-            <h3 style={{ marginTop: 0, color: '#ddd6fe' }}>Multi-Agent System Pipeline</h3>
-            <div className="grid-5">
-              {(arch?.agents || []).map((ag) => (
-                <div key={ag.id} style={{ padding: 12, background: '#0f172a', borderRadius: 8, border: '1px solid #475569' }}>
-                  <div style={{ fontWeight: 600, color: '#c4b5fd', fontSize: 13 }}>{ag.name}</div>
-                  <div style={{ marginTop: 6, fontSize: 12, color: '#94a3b8' }}>{ag.role}</div>
-                </div>
-              ))}
-            </div>
-          </div>
+        const LocalReactDOM = {
+          createRoot(container) {
+            rootContainer = container;
+            return {
+              render(vnode) {
+                rootComponent = () => vnode;
+                rerender();
+              }
+            };
+          }
+        };
 
-          <div className="grid-2">
-            <div className="card">
-              <h3 style={{ marginTop: 0, color: '#ddd6fe' }}>Catalog Products & Inventory ({products.length})</h3>
-              <div style={{ maxHeight: 280, overflowY: 'auto' }}>
-                {products.map((p) => (
-                  <div
-                    key={p.product_id}
-                    style={{
-                      padding: '8px 10px',
+        return { React: LocalReact, ReactDOM: LocalReactDOM, mode: 'local-offline-engine' };
+      }
+
+      const runtime = ensureReactRuntime();
+      const React = runtime.React;
+      const ReactDOM = runtime.ReactDOM;
+      const h = React.createElement;
+      const useState = React.useState;
+      const useEffect = React.useEffect;
+
+      function HeaderBar(props) {
+        const health = props.health;
+        return h(
+          'div',
+          { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 } },
+          h(
+            'div',
+            null,
+            h('h1', { style: { margin: 0, fontSize: 24, color: '#c4b5fd' } }, 'Livestream Sales Multi-Agent & RAG Console'),
+            h(
+              'p',
+              { style: { margin: '4px 0 0', color: '#94a3b8', fontSize: 13 } },
+              'React 18 (' +
+                runtime.mode +
+                ') • Orchestrator: ' +
+                (health?.orchestrator_backend || 'stategraph') +
+                ' • Vector RAG: ' +
+                (health?.vector_rag_backend || 'local_vector') +
+                ' • Ollama: ' +
+                (health?.ollama_enabled ? 'enabled' : 'fallback mode')
+            )
+          ),
+          h(
+            'span',
+            { className: 'badge hot' },
+            'Mongo: ' + (health?.mongo_status || 'n/a') + ' | Redis: ' + (health?.redis_status || 'n/a')
+          )
+        );
+      }
+
+      function KpiStatsRow(props) {
+        const summary = props.summary;
+        const ordersCount = props.ordersCount;
+        return h(
+          'div',
+          { className: 'grid-4' },
+          h(
+            'div',
+            { className: 'card' },
+            h('div', { style: { fontSize: 12, color: '#94a3b8' } }, 'Total Comments'),
+            h('div', { style: { fontSize: 28, fontWeight: 700 } }, summary?.comment_count ?? 0)
+          ),
+          h(
+            'div',
+            { className: 'card' },
+            h('div', { style: { fontSize: 12, color: '#94a3b8' } }, 'Hot Buyer Leads'),
+            h('div', { style: { fontSize: 28, fontWeight: 700, color: '#34d399' } }, summary?.hot_lead_count ?? 0)
+          ),
+          h(
+            'div',
+            { className: 'card' },
+            h('div', { style: { fontSize: 12, color: '#94a3b8' } }, 'Needs Human Review'),
+            h('div', { style: { fontSize: 28, fontWeight: 700, color: '#fbbf24' } }, summary?.needs_human_review_count ?? 0)
+          ),
+          h(
+            'div',
+            { className: 'card' },
+            h('div', { style: { fontSize: 12, color: '#94a3b8' } }, 'Livestream Orders (Auto + Demo)'),
+            h('div', { style: { fontSize: 28, fontWeight: 700, color: '#a78bfa' } }, ordersCount)
+          )
+        );
+      }
+
+      function DatabaseDesignPanel(props) {
+        const dbOverview = props.dbOverview;
+        if (!dbOverview) return null;
+        return h(
+          'div',
+          { className: 'grid-2' },
+          h(
+            'div',
+            { className: 'card' },
+            h(
+              'h3',
+              { style: { marginTop: 0, color: '#ddd6fe' } },
+              'MongoDB: ' + dbOverview.database_name + ' (' + dbOverview.total_collections + ' Collections)'
+            ),
+            h(
+              'div',
+              { style: { maxHeight: 240, overflowY: 'auto' } },
+              (dbOverview.collections || []).map((col, idx) =>
+                h(
+                  'div',
+                  {
+                    key: col.name,
+                    style: {
+                      padding: '6px 10px',
                       background: '#0f172a',
-                      borderRadius: 8,
-                      marginTop: 6,
-                      fontSize: 13,
+                      borderRadius: 6,
+                      marginTop: 5,
+                      fontSize: 12,
                       display: 'flex',
                       justifyContent: 'space-between',
-                      alignItems: 'center',
-                    }}
-                  >
-                    <div>
-                      <strong style={{ color: '#f8fafc' }}>{p.name}</strong>
-                      <div style={{ fontSize: 11, color: '#94a3b8' }}>{p.product_id} • {p.category}</div>
-                    </div>
-                    <div style={{ textAlign: 'right' }}>
-                      <div style={{ fontWeight: 700, color: '#a78bfa' }}>${Number(p.price).toFixed(2)}</div>
-                      <span className={`badge ${p.stock_quantity > 0 ? 'hot' : 'review'}`}>
-                        Stock: {p.stock_quantity}
-                      </span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
+                      alignItems: 'center'
+                    }
+                  },
+                  h(
+                    'div',
+                    null,
+                    h('strong', { style: { color: '#c4b5fd' } }, idx + 1 + '. ' + col.name),
+                    h('span', { style: { color: '#94a3b8', marginLeft: 8 } }, '(' + col.model + ')')
+                  ),
+                  h('span', { className: 'badge hot' }, col.document_count + ' docs')
+                )
+              )
+            )
+          ),
+          h(
+            'div',
+            { className: 'card' },
+            h(
+              'h3',
+              { style: { marginTop: 0, color: '#ddd6fe' } },
+              'Redis Infrastructure (' + dbOverview.total_redis_patterns + ' Key Patterns)'
+            ),
+            h(
+              'div',
+              { style: { maxHeight: 240, overflowY: 'auto' } },
+              (dbOverview.redis_structures || []).map((rs) =>
+                h(
+                  'div',
+                  {
+                    key: rs.key_pattern,
+                    style: { padding: '6px 10px', background: '#0f172a', borderRadius: 6, marginTop: 5, fontSize: 12 }
+                  },
+                  h(
+                    'div',
+                    { style: { display: 'flex', justifyContent: 'space-between' } },
+                    h('code', { style: { color: '#93c5fd' } }, rs.key_pattern),
+                    h('span', { className: 'badge warm' }, rs.data_structure)
+                  ),
+                  h('div', { style: { color: '#94a3b8', marginTop: 2, fontSize: 11 } }, rs.purpose)
+                )
+              )
+            )
+          )
+        );
+      }
 
-            <div className="card">
-              <h3 style={{ marginTop: 0, color: '#ddd6fe' }}>Livestream Customer Orders ({orders.length})</h3>
-              <div style={{ maxHeight: 280, overflowY: 'auto' }}>
-                {orders.map((o) => (
-                  <div key={o.order_id} style={{ padding: '8px 10px', background: '#0f172a', borderRadius: 8, marginTop: 6, fontSize: 13 }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                      <strong style={{ color: '#93c5fd' }}>
-                        {o.order_id} • {o.customer_name} ({o.customer_handle})
-                      </strong>
-                      <span
-                        className={`badge ${
-                          o.status === 'delivered' || o.status === 'shipped'
-                            ? 'hot'
-                            : o.status === 'refund_requested'
-                            ? 'review'
-                            : 'warm'
-                        }`}
-                      >
-                        {o.status} / {o.payment_status}
-                      </span>
-                    </div>
-                    <div style={{ fontSize: 12, color: '#cbd5e1', marginTop: 4 }}>
-                      {(o.items || []).map((it) => `${it.product_name} x${it.quantity}`).join(', ')}
-                    </div>
-                    <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 3 }}>
-                      Total: ${Number(o.total_amount).toFixed(2)} • {o.shipping_address}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
+      function DashboardApp() {
+        const [health, setHealth] = useState(null);
+        const [arch, setArch] = useState(null);
+        const [summary, setSummary] = useState(null);
+        const [comments, setComments] = useState([]);
+        const [products, setProducts] = useState([]);
+        const [orders, setOrders] = useState([]);
+        const [dbOverview, setDbOverview] = useState(null);
+        const [question, setQuestion] = useState('What is the price and stock of the Aurora Studio Ringlight?');
+        const [agentOutput, setAgentOutput] = useState(null);
+        const [ragQuery, setRagQuery] = useState('Aurora Studio Ringlight wireless microphone');
+        const [ragHits, setRagHits] = useState([]);
+        const [updatingOrderId, setUpdatingOrderId] = useState(null);
 
-          <DatabaseDesignPanel dbOverview={dbOverview} />
+        const refresh = async () => {
+          try {
+            const [hRes, aRes, sRes, cRes, pRes, oRes, dbRes] = await Promise.all([
+              fetch('/health').then((r) => r.json()),
+              fetch('/api/agent/architecture').then((r) => r.json()),
+              fetch('/api/plugin/summary').then((r) => r.json()),
+              fetch('/api/plugin/comments?limit=20').then((r) => r.json()),
+              fetch('/api/store/products').then((r) => r.json()),
+              fetch('/api/store/orders').then((r) => r.json()),
+              fetch('/api/database/overview').then((r) => r.json())
+            ]);
+            setHealth(hRes);
+            setArch(aRes);
+            setSummary(sRes);
+            setComments(cRes);
+            setProducts(pRes.items || []);
+            setOrders(oRes.items || []);
+            setDbOverview(dbRes);
+          } catch (_) {}
+        };
 
-          <div className="card">
-            <h3 style={{ marginTop: 0, color: '#ddd6fe' }}>Live YouTube Comments Stream</h3>
-            {comments.map((c) => (
-              <div key={c.comment_id} style={{ padding: 12, background: '#0f172a', borderRadius: 8, marginTop: 8 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
-                  <strong>{c.sender}</strong>
-                  <div style={{ display: 'flex', gap: 6 }}>
-                    <span className="badge">{c.intent}</span>
-                    <span className={`badge ${c.lead_label}`}>Lead: {c.lead_label} ({c.lead_score})</span>
-                    {c.auto_order && (
-                      <span className="badge hot">
-                        Order #{c.auto_order.order_id} (${Number(c.auto_order.total_amount).toFixed(2)})
-                      </span>
-                    )}
-                    {c.needs_human_review && <span className="badge review">Needs Review</span>}
-                  </div>
-                </div>
-                <div style={{ marginTop: 6 }}>{c.text}</div>
-                {(c.thread_messages || []).map((m, idx) => (
-                  <div key={idx} style={{ marginTop: 8, padding: 8, borderRadius: 6, background: '#1e1b4b', color: '#ddd6fe', fontSize: 13 }}>
-                    <strong style={{ color: '#6ee7b7' }}>{m.sender}: </strong>
-                    {m.text}
-                  </div>
-                ))}
-                {(!c.thread_messages || !c.thread_messages.length) && c.answer_draft?.answer && (
-                  <div style={{ marginTop: 8, padding: 8, borderRadius: 6, background: '#334155', color: '#fcd34d', fontSize: 13 }}>
-                    <strong>Pending Operator Review: </strong>
-                    {c.answer_draft.answer}
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-        </div>
-      );
-    }
+        useEffect(() => {
+          refresh();
+          const id = setInterval(refresh, 4000);
+          return () => clearInterval(id);
+        }, []);
 
-    ReactDOM.createRoot(document.getElementById('root')).render(<DashboardApp />);
+        const handleOrderAction = async (orderId, nextStatus) => {
+          setUpdatingOrderId(orderId);
+          try {
+            const res = await fetch('/api/store/orders/' + encodeURIComponent(orderId) + '/status', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ status: nextStatus })
+            });
+            if (res.ok) {
+              await refresh();
+            }
+          } finally {
+            setUpdatingOrderId(null);
+          }
+        };
+
+        const runAgent = async (ev) => {
+          ev.preventDefault();
+          if (!question.trim()) return;
+          const res = await fetch('/api/agent/chat', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text: question, sender: 'OperatorTest', author_type: 'viewer' })
+          });
+          if (res.ok) setAgentOutput(await res.json());
+        };
+
+        const runRag = async (ev) => {
+          ev.preventDefault();
+          if (!ragQuery.trim()) return;
+          const res = await fetch('/api/agent/rag/search', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ query: ragQuery, top_k: 4 })
+          });
+          if (res.ok) {
+            const d = await res.json();
+            setRagHits(d.hits || []);
+          }
+        };
+
+        return h(
+          'div',
+          { className: 'container' },
+          h(HeaderBar, { health }),
+          h(KpiStatsRow, { summary, ordersCount: orders.length }),
+          h(
+            'div',
+            { className: 'grid-2' },
+            h(
+              'div',
+              { className: 'card' },
+              h('h3', { style: { marginTop: 0, color: '#ddd6fe' } }, 'Multi-Agent + Tool Calling Playground'),
+              h(
+                'form',
+                { onSubmit: runAgent, style: { display: 'flex', gap: 8, marginBottom: 12 } },
+                h('input', { value: question, onChange: (ev) => setQuestion(ev.target.value) }),
+                h('button', { type: 'submit' }, 'Run Agents')
+              ),
+              agentOutput?.state
+                ? h(
+                    'div',
+                    { style: { fontSize: 13 } },
+                    h(
+                      'div',
+                      { style: { padding: 10, borderRadius: 8, background: '#0f172a', marginBottom: 8 } },
+                      h('strong', null, 'Draft Reply: '),
+                      agentOutput.state.answer_draft?.answer,
+                      h(
+                        'div',
+                        { style: { marginTop: 6, color: '#a78bfa', fontSize: 12 } },
+                        'Intent: ' +
+                          agentOutput.state.intent +
+                          ' | Lead: ' +
+                          agentOutput.state.lead_label +
+                          ' (' +
+                          agentOutput.state.lead_score +
+                          '/100) | Tool: ' +
+                          (agentOutput.state.selected_tool || 'none')
+                      )
+                    ),
+                    (agentOutput.state.agent_trace || []).map((st, idx) =>
+                      h(
+                        'div',
+                        { key: idx, style: { padding: '6px 8px', background: '#0f172a', borderRadius: 6, marginTop: 4 } },
+                        h('strong', { style: { color: '#c4b5fd' } }, st.agent),
+                        ': ' + st.detail
+                      )
+                    )
+                  )
+                : null
+            ),
+            h(
+              'div',
+              { className: 'card' },
+              h('h3', { style: { marginTop: 0, color: '#ddd6fe' } }, 'Vector RAG Semantic Search'),
+              h(
+                'form',
+                { onSubmit: runRag, style: { display: 'flex', gap: 8, marginBottom: 12 } },
+                h('input', { value: ragQuery, onChange: (ev) => setRagQuery(ev.target.value) }),
+                h('button', { type: 'submit', className: 'secondary' }, 'Search RAG')
+              ),
+              ragHits.map((hit, idx) =>
+                h(
+                  'div',
+                  { key: idx, style: { padding: 10, background: '#0f172a', borderRadius: 8, marginTop: 8, fontSize: 13 } },
+                  h(
+                    'div',
+                    { style: { display: 'flex', justifyContent: 'space-between', color: '#93c5fd', fontWeight: 600 } },
+                    h('span', null, '[' + hit.source_type + '] ' + hit.title + ' (' + hit.source_id + ')'),
+                    h('span', null, 'score: ' + hit.score)
+                  ),
+                  h('div', { style: { marginTop: 4, color: '#cbd5e1' } }, hit.excerpt)
+                )
+              )
+            )
+          ),
+          h(
+            'div',
+            { className: 'card', style: { marginBottom: 20 } },
+            h('h3', { style: { marginTop: 0, color: '#ddd6fe' } }, 'Multi-Agent System Pipeline'),
+            h(
+              'div',
+              { className: 'grid-5' },
+              (arch?.agents || []).map((ag) =>
+                h(
+                  'div',
+                  { key: ag.id, style: { padding: 12, background: '#0f172a', borderRadius: 8, border: '1px solid #475569' } },
+                  h('div', { style: { fontWeight: 600, color: '#c4b5fd', fontSize: 13 } }, ag.name),
+                  h('div', { style: { marginTop: 6, fontSize: 12, color: '#94a3b8' } }, ag.role)
+                )
+              )
+            )
+          ),
+          h(
+            'div',
+            { className: 'grid-2' },
+            h(
+              'div',
+              { className: 'card' },
+              h('h3', { style: { marginTop: 0, color: '#ddd6fe' } }, 'Catalog Products & Inventory (' + products.length + ')'),
+              h(
+                'div',
+                { style: { maxHeight: 320, overflowY: 'auto' } },
+                products.map((p) =>
+                  h(
+                    'div',
+                    {
+                      key: p.product_id,
+                      style: {
+                        padding: '8px 10px',
+                        background: '#0f172a',
+                        borderRadius: 8,
+                        marginTop: 6,
+                        fontSize: 13,
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center'
+                      }
+                    },
+                    h(
+                      'div',
+                      null,
+                      h('strong', { style: { color: '#f8fafc' } }, p.name),
+                      h('div', { style: { fontSize: 11, color: '#94a3b8' } }, p.product_id + ' • ' + p.category)
+                    ),
+                    h(
+                      'div',
+                      { style: { textAlign: 'right' } },
+                      h('div', { style: { fontWeight: 700, color: '#a78bfa' } }, '$' + Number(p.price).toFixed(2)),
+                      h('span', { className: 'badge ' + (p.stock_quantity > 0 ? 'hot' : 'review') }, 'Stock: ' + p.stock_quantity)
+                    )
+                  )
+                )
+              )
+            ),
+            h(
+              'div',
+              { className: 'card' },
+              h('h3', { style: { marginTop: 0, color: '#ddd6fe' } }, 'Livestream Customer Orders (' + orders.length + ')'),
+              h(
+                'div',
+                { style: { maxHeight: 320, overflowY: 'auto' } },
+                orders.map((o) =>
+                  h(
+                    'div',
+                    {
+                      key: o.order_id,
+                      style: { padding: '10px 12px', background: '#0f172a', borderRadius: 8, marginTop: 6, fontSize: 13 }
+                    },
+                    h(
+                      'div',
+                      { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 } },
+                      h('strong', { style: { color: '#93c5fd' } }, o.order_id + ' • ' + o.customer_name + ' (' + o.customer_handle + ')'),
+                      h(
+                        'span',
+                        {
+                          className:
+                            'badge ' +
+                            (o.status === 'confirmed' || o.status === 'fulfilled'
+                              ? 'hot'
+                              : o.status === 'cancelled'
+                                ? 'review'
+                                : 'warm')
+                        },
+                        o.status + ' / ' + o.payment_status
+                      )
+                    ),
+                    h(
+                      'div',
+                      { style: { fontSize: 12, color: '#cbd5e1', marginTop: 4 } },
+                      (o.items || []).map((it) => it.product_name + ' x' + it.quantity).join(', ')
+                    ),
+                    h(
+                      'div',
+                      {
+                        style: {
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                          alignItems: 'center',
+                          marginTop: 6,
+                          gap: 8
+                        }
+                      },
+                      h(
+                        'div',
+                        { style: { fontSize: 11, color: '#94a3b8' } },
+                        'Total: $' + Number(o.total_amount).toFixed(2) + ' • ' + o.shipping_address
+                      ),
+                      h(
+                        'div',
+                        { style: { display: 'flex', gap: 6, flexShrink: 0 } },
+                        o.status === 'pending'
+                          ? h(
+                              'button',
+                              {
+                                type: 'button',
+                                className: 'action-confirm',
+                                disabled: updatingOrderId === o.order_id,
+                                onClick: () => handleOrderAction(o.order_id, 'confirmed')
+                              },
+                              'Confirm COD'
+                            )
+                          : null,
+                        o.status === 'pending' || o.status === 'confirmed'
+                          ? h(
+                              'button',
+                              {
+                                type: 'button',
+                                className: 'action-cancel',
+                                disabled: updatingOrderId === o.order_id,
+                                onClick: () => handleOrderAction(o.order_id, 'cancelled')
+                              },
+                              'Cancel Order'
+                            )
+                          : null
+                      )
+                    )
+                  )
+                )
+              )
+            )
+          ),
+          h(DatabaseDesignPanel, { dbOverview }),
+          h(
+            'div',
+            { className: 'card' },
+            h('h3', { style: { marginTop: 0, color: '#ddd6fe' } }, 'Live YouTube Comments Stream'),
+            comments.map((c) =>
+              h(
+                'div',
+                { key: c.comment_id, style: { padding: 12, background: '#0f172a', borderRadius: 8, marginTop: 8 } },
+                h(
+                  'div',
+                  { style: { display: 'flex', justifyContent: 'space-between', fontSize: 13 } },
+                  h('strong', null, c.sender),
+                  h(
+                    'div',
+                    { style: { display: 'flex', gap: 6 } },
+                    h('span', { className: 'badge' }, c.intent),
+                    h('span', { className: 'badge ' + c.lead_label }, 'Lead: ' + c.lead_label + ' (' + c.lead_score + ')'),
+                    c.auto_order
+                      ? h(
+                          'span',
+                          { className: 'badge hot' },
+                          'Order #' + c.auto_order.order_id + ' ($' + Number(c.auto_order.total_amount).toFixed(2) + ')'
+                        )
+                      : null,
+                    c.needs_human_review ? h('span', { className: 'badge review' }, 'Needs Review') : null
+                  )
+                ),
+                h('div', { style: { marginTop: 6 } }, c.text),
+                (c.thread_messages || []).map((m, idx) =>
+                  h(
+                    'div',
+                    {
+                      key: idx,
+                      style: { marginTop: 8, padding: 8, borderRadius: 6, background: '#1e1b4b', color: '#ddd6fe', fontSize: 13 }
+                    },
+                    h('strong', { style: { color: '#6ee7b7' } }, m.sender + ': '),
+                    m.text
+                  )
+                ),
+                (!c.thread_messages || !c.thread_messages.length) && c.answer_draft?.answer
+                  ? h(
+                      'div',
+                      { style: { marginTop: 8, padding: 8, borderRadius: 6, background: '#334155', color: '#fcd34d', fontSize: 13 } },
+                      h('strong', null, 'Pending Operator Review: '),
+                      c.answer_draft.answer
+                    )
+                  : null
+              )
+            )
+          )
+        );
+      }
+
+      ReactDOM.createRoot(document.getElementById('root')).render(h(DashboardApp));
+    })();
   </script>
 </body>
 </html>

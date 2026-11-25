@@ -1,5 +1,6 @@
 """Local API for receiving and classifying YouTube Live comments."""
 
+import asyncio
 from collections import Counter, deque
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -10,6 +11,7 @@ from pathlib import Path
 import re
 import time
 from typing import Any, Literal
+import unicodedata
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Query
@@ -141,6 +143,15 @@ class AnswerDraftResponse(BaseModel):
     is_draft: Literal[True]
 
 
+class OrderUpdateStatusRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status: OrderStatus
+    payment_status: PaymentStatus | None = None
+    shipping_address: str | None = None
+    notes: str | None = None
+
+
 def _to_safe_id(raw_id: str) -> str:
     cleaned = re.sub(r"[^A-Za-z0-9._@-]+", "_", raw_id.strip()).strip("_")
     if not cleaned:
@@ -158,6 +169,27 @@ def _safe_timestamp_to_datetime(timestamp_ms: int) -> datetime:
         return utc_now()
 
 
+def _strip_accents(text: str) -> str:
+    decomp = unicodedata.normalize("NFD", text)
+    stripped = "".join(ch for ch in decomp if unicodedata.category(ch) != "Mn")
+    return stripped.replace("đ", "d").replace("Đ", "D")
+
+
+_BOT_ECHO_PATTERN = re.compile(
+    r"^\s*(?:🤖|\[AI\])"
+    r"|Order\s+#ORD-(?:LIVE|DEMO)-\d+\s+created!"
+    r"|Đã\s+(?:tạo|chốt|cập\s+nhật)\s+đơn\s+#ORD-(?:LIVE|DEMO)-\d+"
+    r"|^(?:@[A-Za-z0-9_.-]+\s+)?(?:Draft\s*\(synthetic\s+demo\s+data\)|Bản\s+nháp\s*\(dữ\s+liệu\s+mô\s+phỏng\)|Draft:\s*Order\s+#ORD-|Bản\s+nháp:\s*Đã\s+(?:tạo|chốt|cập\s+nhật)\s+đơn\s+#ORD-)"
+    r"|the\s+catalog\s+lists\s+\d+\s+simulated\s+units\s+for"
+    r"|có\s+giá\s+niêm\s+yết\s+là\s+\$\d+\.\d{2}\s*\((?:còn|hiện)",
+    re.IGNORECASE,
+)
+
+
+def _is_bot_echo_text(text: str) -> bool:
+    return bool(_BOT_ECHO_PATTERN.search(text.strip()))
+
+
 _GREETING_PATTERN = re.compile(
     r"^\s*(?:hello|hi|hey|yo|good\s+(?:morning|afternoon|evening)|xin\s+chào|chào(?:\s+shop|\s+ad)?|hi\s+shop|hello\s+shop)[!.,?\s]*$",
     re.IGNORECASE,
@@ -168,46 +200,56 @@ _GENERAL_POLICY_PATTERN = re.compile(
 )
 _VIETNAMESE_CHAR_PATTERN = re.compile(
     r"[àáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđ]"
-    r"|\b(?:giá\s+bao\s+nhiêu|bao\s+nhiêu\s+tiền|còn\s+hàng|hết\s+hàng|phí\s+ship|tiền\s+ship|giao\s+hàng|đổi\s+trả|bảo\s+hành|khuyến\s+mãi|thu\s+hộ|chốt\s+đơn|shop\s+ơi)\b",
+    r"|\b(?:giá\s+bao\s+nhiêu|gia\s+bao\s+nhieu|bao\s+nhiêu\s+tiền|bao\s+nhieu\s+tien|còn\s+hàng|con\s+hang|hết\s+hàng|het\s+hang|phí\s+ship|phi\s+ship|tiền\s+ship|tien\s+ship|giao\s+hàng|giao\s+hang|đổi\s+trả|doi\s+tra|bảo\s+hành|bao\s+hanh|khuyến\s+mãi|khuyen\s+mai|thu\s+hộ|thu\s+ho|chốt\s+đơn|chot\s+don|lên\s+đơn|len\s+don|shop\s+ơi|shop\s+oi|chot\s+\d|dat\s+\d|lay\s+\d|mua\s+\d|cho\s+(?:em|minh|anh|chi)\s+\d|den\s+ban|coc\s+su|ly\s+su|quat\s+cam\s+tay|binh\s+giu\s+nhiet|tui\s+tote|am\s+dun|khan\s+len|khan\s+choang|cu\s+sac|sac\s+usb|son\s+moi|son\s+li|mic\s+khong\s+day|bot\s+matcha|dia\s+chi|sđt|sdt)\b",
     re.IGNORECASE,
 )
 _ORDER_ACTION_PATTERN = re.compile(
-    r"\b(?:buy|purchase|checkout|book|order|place\s+an?\s+order|i\s+want(?:\s+to\s+buy|\s+to\s+order)?|i'?d\s+like\s+to\s+(?:buy|order)|i'?ll\s+take|i\s+will\s+take|give\s+me|chốt|chốt\s+đơn|mua|đặt|đặt\s+hàng|lấy)\b",
+    r"\b(?:buy|purchase|checkout|book|order|place\s+an?\s+order|i\s+want\s+to\s+(?:buy|order)|i'?d\s+like\s+to\s+(?:buy|order)|i'?ll\s+take|i\s+will\s+take|chốt|chot|chốt\s+đơn|chot\s+don|lên\s+đơn|len\s+don|mua|đặt|dat|đặt\s+hàng|dat\s+hang|lấy|lay|cho\s+(?:em|mình|minh|anh|chị|chi|tôi|toi|shop)\s+(?:mua|đặt|dat|lấy|lay|chốt|chot|\d+|một|mot|hai|ba|bốn|bon|năm|nam))\b",
     re.IGNORECASE,
 )
 _NEGATIVE_ORDER_PATTERN = re.compile(
     r"\b(?:don'?t|do\s+not|never|not|won'?t|wouldn'?t|shouldn'?t|cannot|can'?t)\s+(?:buy|order|purchase|take|get|book)\b"
-    r"|\b(?:đừng|không|chưa|chẳng|ko|k)\s*(?:muốn\s+|nên\s+|định\s+|cần\s+)?(?:mua|chốt|đặt|lấy)\b"
-    r"|\b(?:phân\s+vân|suy\s+nghĩ\s+thêm)\b",
+    r"|\b(?:buy|order|purchase)\s+(?:something|anything)?\s*later\b"
+    r"|\b(?:maybe\s+later|give\s+me\s+a\s+(?:shoutout|hand|break|second|minute))\b"
+    r"|\b(?:đừng|dung|không|khong|chưa|chua|chẳng|chang|ko|k)\s*(?:muốn\s+|muon\s+|nên\s+|nen\s+|định\s+|dinh\s+|cần\s+|can\s+)?(?:mua|chốt|chot|đặt|dat|lấy|lay)\b"
+    r"|\b(?:phân\s+vân|phan\s+van|suy\s+nghĩ\s+thêm|suy\s+nghi\s+them|mua\s+sau|đặt\s+sau|dat\s+sau)\b",
     re.IGNORECASE,
 )
 _PAST_OR_INQUIRY_ORDER_PATTERN = re.compile(
     r"\b(?:already\s+(?:bought|ordered|purchased)|bought|ordered\s+(?:last|yesterday|a\s+week|two\s+days)|purchased\s+(?:last|yesterday)|where\s+is\s+my\s+order|track\s+my\s+order|check\s+my\s+order|my\s+order\s+status|order\s+status|take\s+a\s+look|take\s+care|take\s+time)\b"
-    r"|\b(?:đã\s+(?:mua|đặt|nhận)|mua\s+(?:tuần\s+trước|hôm\s+qua|lần\s+trước|tháng\s+trước|hôm\s+trước)|đơn\s+(?:hàng\s+)?của\s+(?:mình|tôi|em)\s+(?:đâu|ở\s+đâu|sao\s+rồi|khi\s+nào\s+giao))\b",
+    r"|\b(?:đã\s+(?:mua|đặt|nhận)|da\s+(?:mua|dat|nhan)|mua\s+(?:tuần\s+trước|tuan\s+truoc|hôm\s+qua|hom\s+qua|lần\s+trước|lan\s+truoc|tháng\s+trước|thang\s+truoc|hôm\s+trước|hom\s+truoc)|đơn\s+(?:hàng\s+)?của\s+(?:mình|tôi|em)\s+(?:đâu|ở\s+đâu|sao\s+rồi|khi\s+nào\s+giao)|don\s+(?:hang\s+)?cua\s+(?:minh|toi|em)\s+(?:dau|o\s+dau|sao\s+roi|khi\s+nao\s+giao))\b",
     re.IGNORECASE,
 )
 _INFO_INQUIRY_PATTERN = re.compile(
-    r"\b(?:how\s+much|what\s+is|what\s+are|how\s+long|when\s+will|where\s+is|is\s+it\s+in\s+stock|in\s+stock\s*\?|do\s+you\s+have\s+any|giá\s+bao\s+nhiêu|bao\s+nhiêu\s+tiền|giá\s+sao|còn\s+hàng\s+không|còn\s+không|hết\s+hàng\s+chưa|phí\s+ship|tiền\s+ship|ship\s+bao\s+(?:nhiêu|lâu)|giao\s+bao\s+lâu|có\s+freeship\s+không)\b",
+    r"\b(?:how\s+much|what\s+is|what\s+are|how\s+long|when\s+will|where\s+is|is\s+it\s+in\s+stock|in\s+stock\s*\?|do\s+you\s+have\s+any|giá\s+bao\s+nhiêu|gia\s+bao\s+nhieu|bao\s+nhiêu\s+tiền|bao\s+nhieu\s+tien|giá\s+sao|gia\s+sao|còn\s+hàng\s+không|con\s+hang\s+khong|còn\s+không|con\s+khong|hết\s+hàng\s+chưa|het\s+hang\s+chua|phí\s+ship|phi\s+ship|tiền\s+ship|tien\s+ship|ship\s+bao\s+(?:nhiêu|nhieu|lâu|lau)|giao\s+bao\s+lâu|giao\s+bao\s+lau|có\s+freeship\s+không|co\s+freeship\s+khong)\b",
     re.IGNORECASE,
 )
-_PHONE_PATTERN = re.compile(r"(?:\+84|0)\d{8,10}\b")
-_ADDRESS_EXTRACT_PATTERN = re.compile(
-    r"(?:địa\s+chỉ|dia\s+chi|address|giao\s+tới|giao\s+đến|ship\s+to)\s*[:\-]?\s*([^\n,;]{5,120})",
+_PHONE_PATTERN = re.compile(r"(?<!\d)(?:\+84|0)\d(?:[\s.\-]?\d){7,9}(?!\d)")
+_ADDRESS_MARKER_PATTERN = re.compile(
+    r"(?:\b(?:địa\s+chỉ|dia\s+chi|đ/c|d/c|address|giao\s+tới|giao\s+toi|giao\s+đến|giao\s+den|giao\s+về|giao\s+ve|ship\s+to|ship\s+tới|ship\s+toi|nhận\s+tại|nhan\s+tai)\b)\s*[:\-]?\s*(.+)$",
+    re.IGNORECASE,
+)
+_FAN_PERSON_IDIOM_PATTERN = re.compile(
+    r"\b(?:huge|big|biggest|super|loyal|true|real|diehard|a|your|his|her|our|their)\s+fan\b|\bfan\s+(?:of|club)\b",
+    re.IGNORECASE,
+)
+_SON_ENGLISH_KINSHIP_PATTERN = re.compile(
+    r"\b(?:my|our|his|her|your|their|a|the|oldest|youngest|little|dear)\s+son\b|\bson\s+(?:loves|likes|wants|is|was|has)\b",
     re.IGNORECASE,
 )
 _PRODUCT_ALIASES: dict[str, tuple[str, ...]] = {
     "SYN-PROD-001": ("lumanest", "desk lamp", "lamp", "đèn bàn", "den ban"),
-    "SYN-PROD-002": ("pebblebrook", "ceramic mug", "mug", "cốc sứ", "ly sứ", "coc su", "cốc"),
-    "SYN-PROD-003": ("kettle fern", "mini kettle", "kettle", "ấm đun", "am dun"),
-    "SYN-PROD-004": ("cloudstep", "canvas tote", "tote", "túi tote", "túi vải", "tui tote"),
-    "SYN-PROD-005": ("northstar", "knit scarf", "scarf", "khăn choàng", "khăn len", "khan"),
-    "SYN-PROD-006": ("morrow", "desk charger", "usb charger", "charger", "củ sạc", "sạc usb"),
-    "SYN-PROD-007": ("aurora", "ringlight", "ring light", "đèn livestream", "đèn ringlight"),
-    "SYN-PROD-008": ("velvet", "matte lipstick", "lipstick", "son môi", "son lì", "son"),
-    "SYN-PROD-009": ("breeze", "portable fan", "handheld fan", "fan", "quạt cầm tay", "quạt"),
-    "SYN-PROD-010": ("zenith", "wireless microphone", "microphone", "lavalier", "mic không dây", "micro", "mic"),
-    "SYN-PROD-011": ("matcha", "collagen powder", "collagen", "bột matcha"),
-    "SYN-PROD-012": ("solaris", "insulated bottle", "thermal flask", "bottle", "bình giữ nhiệt"),
+    "SYN-PROD-002": ("pebblebrook", "ceramic mug", "mug", "cốc sứ", "coc su", "ly sứ", "ly su", "cốc"),
+    "SYN-PROD-003": ("kettle fern", "mini kettle", "kettle", "ấm đun", "am dun", "ấm siêu tốc", "am sieu toc"),
+    "SYN-PROD-004": ("cloudstep", "canvas tote", "tote bag", "tote", "túi tote", "tui tote", "túi vải", "tui vai"),
+    "SYN-PROD-005": ("northstar", "knit scarf", "scarf", "khăn choàng", "khan choang", "khăn len", "khan len", "khăn", "khan"),
+    "SYN-PROD-006": ("morrow", "desk charger", "usb charger", "65w charger", "charger", "củ sạc", "cu sac", "sạc usb", "sac usb", "sạc nhanh", "sac nhanh"),
+    "SYN-PROD-007": ("aurora", "studio ringlight", "ringlight", "ring light", "đèn livestream", "den livestream", "đèn ringlight", "den ringlight"),
+    "SYN-PROD-008": ("velvet", "matte lipstick", "lipstick", "son môi", "son moi", "son lì", "son li", "son kem", "thỏi son", "thoi son", "cây son", "cay son", "son"),
+    "SYN-PROD-009": ("breeze", "portable fan", "handheld fan", "mini fan", "quạt cầm tay", "quat cam tay", "quạt mini", "quat mini", "quạt", "quat", "fan"),
+    "SYN-PROD-010": ("zenith", "wireless microphone", "microphone", "lavalier", "mic không dây", "mic khong day", "micro không dây", "micro khong day", "micro", "mic"),
+    "SYN-PROD-011": ("matcha glow", "collagen powder", "matcha", "collagen", "bột matcha", "bot matcha", "bột collagen", "bot collagen"),
+    "SYN-PROD-012": ("solaris", "insulated bottle", "thermal flask", "bottle", "bình giữ nhiệt", "binh giu nhiet"),
 }
 _WORD_QTY: dict[str, int] = {
     "zero": 0,
@@ -222,16 +264,25 @@ _WORD_QTY: dict[str, int] = {
     "nine": 9,
     "ten": 10,
     "không": 0,
+    "khong": 0,
     "một": 1,
+    "mot": 1,
     "hai": 2,
     "ba": 3,
     "bốn": 4,
+    "bon": 4,
     "năm": 5,
+    "nam": 5,
     "sáu": 6,
+    "sau": 6,
     "bảy": 7,
+    "bay": 7,
     "tám": 8,
+    "tam": 8,
     "chín": 9,
+    "chin": 9,
     "mười": 10,
+    "muoi": 10,
 }
 
 
@@ -254,8 +305,72 @@ def _is_vietnamese_text(text: str) -> bool:
     return bool(_VIETNAMESE_CHAR_PATTERN.search(text))
 
 
-def _match_product_in_segment(segment: str, products: tuple[Any, ...]) -> Any | None:
+def _extract_phone_number(text: str) -> str | None:
+    m = _PHONE_PATTERN.search(text)
+    if not m:
+        return None
+    normalized = re.sub(r"[\s.\-]+", "", m.group(0))
+    return normalized
+
+
+def _extract_shipping_address(text: str) -> str | None:
+    m = _ADDRESS_MARKER_PATTERN.search(text)
+    if not m:
+        return None
+    raw_addr = m.group(1)
+    # Remove embedded phone numbers and phone labels from the address string
+    cleaned_addr = _PHONE_PATTERN.sub(" ", raw_addr)
+    cleaned_addr = re.sub(
+        r"\b(?:sđt|sdt|số\s+điện\s+thoại|so\s+dien\s+thoai|điện\s+thoại|dien\s+thoai|phone|tel|liên\s+hệ|lien\s+he)\b\s*[:\-]?",
+        " ",
+        cleaned_addr,
+        flags=re.IGNORECASE,
+    )
+    cleaned_addr = re.sub(r"\s+", " ", cleaned_addr).strip(" ,;:-.")
+    return cleaned_addr if len(cleaned_addr) >= 3 else None
+
+
+def _strip_shipping_and_phone_spans(text: str) -> str:
+    """Remove address and phone sections from order text before splitting product clauses or extracting quantities."""
+    without_addr = _ADDRESS_MARKER_PATTERN.sub(" ", text)
+    without_phone = _PHONE_PATTERN.sub(" ", without_addr)
+    without_labels = re.sub(
+        r"\b(?:sđt|sdt|số\s+điện\s+thoại|so\s+dien\s+thoai|điện\s+thoại|dien\s+thoai|phone|tel|địa\s+chỉ|dia\s+chi)\b\s*[:\-]?",
+        " ",
+        without_phone,
+        flags=re.IGNORECASE,
+    )
+    # Remove trailing location qualifiers like "ở quận 3", "quận 1", "q1"
+    without_loc = re.sub(
+        r"\b(?:ở|o|tại|tai)?\s*(?:quận|quan|q\.?|phường|phuong|p\.?|huyện|huyen)\s*\d+[a-z]?\b",
+        " ",
+        without_labels,
+        flags=re.IGNORECASE,
+    )
+    return re.sub(r"\s+", " ", without_loc).strip()
+
+
+def _alias_allowed_in_context(alias: str, full_text: str) -> bool:
+    low = full_text.casefold()
+    if alias == "fan" and _FAN_PERSON_IDIOM_PATTERN.search(low):
+        return False
+    if alias == "son":
+        if _SON_ENGLISH_KINSHIP_PATTERN.search(low):
+            return False
+        if not _is_vietnamese_text(full_text):
+            return False
+    return True
+
+
+def _match_product_in_segment(
+    segment: str,
+    products: tuple[Any, ...],
+    *,
+    full_text: str | None = None,
+) -> Any | None:
+    ctx_text = full_text if full_text is not None else segment
     lowered = segment.casefold()
+    unaccented = _strip_accents(lowered)
     matched = None
     best_len = 0
     for product in products:
@@ -266,7 +381,13 @@ def _match_product_in_segment(segment: str, products: tuple[Any, ...]) -> Any | 
                 best_len = len(prod_name_low)
             continue
         for alias in _PRODUCT_ALIASES.get(product.id, ()):
-            if re.search(rf"\b{re.escape(alias)}\b", lowered) and len(alias) > best_len:
+            if not _alias_allowed_in_context(alias, ctx_text):
+                continue
+            alias_unacc = _strip_accents(alias)
+            if (
+                re.search(rf"\b{re.escape(alias)}\b", lowered)
+                or re.search(rf"\b{re.escape(alias_unacc)}\b", unaccented)
+            ) and len(alias) > best_len:
                 matched = product
                 best_len = len(alias)
     return matched
@@ -274,6 +395,7 @@ def _match_product_in_segment(segment: str, products: tuple[Any, ...]) -> Any | 
 
 def _find_all_products_in_text(text: str, products: tuple[Any, ...]) -> list[Any]:
     lowered = text.casefold()
+    unaccented = _strip_accents(lowered)
     found: list[tuple[int, Any]] = []
     for product in products:
         prod_name_low = product.name.casefold()
@@ -288,7 +410,12 @@ def _find_all_products_in_text(text: str, products: tuple[Any, ...]) -> list[Any
         best_pos = -1
         best_len = 0
         for alias in _PRODUCT_ALIASES.get(product.id, ()):
+            if not _alias_allowed_in_context(alias, text):
+                continue
             m = re.search(rf"\b{re.escape(alias)}\b", lowered)
+            if not m:
+                alias_unacc = _strip_accents(alias)
+                m = re.search(rf"\b{re.escape(alias_unacc)}\b", unaccented)
             if m and len(alias) > best_len:
                 best_pos = m.start()
                 best_len = len(alias)
@@ -300,16 +427,43 @@ def _find_all_products_in_text(text: str, products: tuple[Any, ...]) -> list[Any
 
 def _extract_quantity_from_segment(segment: str) -> tuple[int, bool]:
     """Return (quantity, is_valid). Numbers outside 1..20 return (raw_num, False)."""
-    cleaned_seg = _PHONE_PATTERN.sub(" ", segment.casefold())
-    num_matches = re.findall(r"(?<![A-Za-z0-9_])(-?\d+)(?![A-Za-z0-9_])", cleaned_seg)
+    cleaned_seg = _strip_shipping_and_phone_spans(segment).casefold()
+    # Strip product IDs (e.g. SYN-PROD-007), SKUs, order IDs, and technical specs (e.g. 65W, 500ml)
+    cleaned_seg = re.sub(
+        r"\b(?:syn-prod-\d+|sku-[a-z0-9-]+|ord-(?:live|demo)-\d+|var-[a-z0-9-]+)\b",
+        " ",
+        cleaned_seg,
+        flags=re.IGNORECASE,
+    )
+    cleaned_seg = re.sub(
+        r"\b\d+\s*(?:w|v|mah|ml|l|gb|mb|kg|g|cm|mm|inch|%|k|đ|vnd|usd)\b",
+        " ",
+        cleaned_seg,
+        flags=re.IGNORECASE,
+    )
+
+    # Match numbers with optional unit/multiplier suffix like "2x", "x2", "3c", "3 cái", "2 chiếc"
+    x_prefix_match = re.search(r"(?<![A-Za-z0-9_-])x\s*(-?\d+)\b", cleaned_seg)
+    num_matches = re.findall(
+        r"(?<![A-Za-z0-9_-])(-?\d+)(?:\s*(?:x|c|cái|cai|chiếc|chiec|sp|món|mon|hộp|hop|bình|binh|cây|cay|thỏi|thoi|bộ|bo|túi|tui|ly|cốc|coc))?(?![A-Za-z0-9_-])",
+        cleaned_seg,
+    )
     if num_matches:
         parsed_num = int(num_matches[0])
         if 1 <= parsed_num <= 20:
             return parsed_num, True
         return parsed_num, False
+    if x_prefix_match:
+        parsed_num = int(x_prefix_match.group(1))
+        if 1 <= parsed_num <= 20:
+            return parsed_num, True
+        return parsed_num, False
 
+    unacc_seg = _strip_accents(cleaned_seg)
     for word, val in _WORD_QTY.items():
-        if re.search(rf"\b{re.escape(word)}\b", cleaned_seg):
+        if re.search(rf"\b{re.escape(word)}\b", cleaned_seg) or re.search(
+            rf"\b{re.escape(word)}\b", unacc_seg
+        ):
             if 1 <= val <= 20:
                 return val, True
             return val, False
@@ -320,12 +474,13 @@ def _extract_quantity_from_segment(segment: str) -> tuple[int, bool]:
 def _parse_order_request(text: str) -> OrderParseAttempt | None:
     """Parse single- or multi-item purchase requests while filtering out negations, past purchases, and invalid quantities."""
     cleaned = text.strip()
-    if not cleaned:
+    if not cleaned or _is_bot_echo_text(cleaned):
         return None
     lowered = cleaned.casefold()
+    unaccented = _strip_accents(lowered)
 
     if any(
-        blocked in lowered
+        blocked in lowered or blocked in unaccented
         for blocked in (
             "refund",
             "return",
@@ -333,36 +488,38 @@ def _parse_order_request(text: str) -> OrderParseAttempt | None:
             "damaged",
             "broken",
             "hoàn tiền",
+            "hoan tien",
             "hủy đơn",
+            "huy don",
             "đổi trả",
+            "doi tra",
         )
     ):
         return None
-    if _NEGATIVE_ORDER_PATTERN.search(lowered):
+    if _NEGATIVE_ORDER_PATTERN.search(lowered) or _NEGATIVE_ORDER_PATTERN.search(unaccented):
         return None
-    if _PAST_OR_INQUIRY_ORDER_PATTERN.search(lowered):
+    if _PAST_OR_INQUIRY_ORDER_PATTERN.search(lowered) or _PAST_OR_INQUIRY_ORDER_PATTERN.search(unaccented):
         return None
-    if _INFO_INQUIRY_PATTERN.search(lowered):
+    if _INFO_INQUIRY_PATTERN.search(lowered) or _INFO_INQUIRY_PATTERN.search(unaccented):
         return None
-    if not _ORDER_ACTION_PATTERN.search(lowered):
+    if not (_ORDER_ACTION_PATTERN.search(lowered) or _ORDER_ACTION_PATTERN.search(unaccented)):
         return None
 
     dataset = load_synthetic_data()
-    phone_match = _PHONE_PATTERN.search(cleaned)
-    phone_val = phone_match.group(0) if phone_match else None
-    addr_match = _ADDRESS_EXTRACT_PATTERN.search(cleaned)
-    addr_val = addr_match.group(1).strip() if addr_match else None
+    phone_val = _extract_phone_number(cleaned)
+    addr_val = _extract_shipping_address(cleaned)
+    order_core = _strip_shipping_and_phone_spans(cleaned)
 
     clauses = re.split(
-        r"\s*(?:,|;|\+|&|\band\b|\bwith\b|\bvà\b|\bvới\b|\bkèm\b|\bthêm\b)\s*",
-        cleaned,
+        r"\s*(?:,|;|\+|&|\band\b|\bwith\b|\bvà\b|\bva\b|\bvới\b|\bvoi\b|\bkèm\b|\bkem\b|\bthêm\b|\bthem\b)\s*",
+        order_core,
         flags=re.IGNORECASE,
     )
     aggregated: dict[str, tuple[Any, int]] = {}
     for clause in clauses:
         if not clause.strip():
             continue
-        prod = _match_product_in_segment(clause, dataset.products)
+        prod = _match_product_in_segment(clause, dataset.products, full_text=cleaned)
         if prod is None:
             continue
         qty, is_valid = _extract_quantity_from_segment(clause)
@@ -387,10 +544,10 @@ def _parse_order_request(text: str) -> OrderParseAttempt | None:
             aggregated[prod.id] = (prod, qty)
 
     if not aggregated:
-        prod = _match_product_in_segment(cleaned, dataset.products)
+        prod = _match_product_in_segment(order_core, dataset.products, full_text=cleaned)
         if prod is None:
             return None
-        qty, is_valid = _extract_quantity_from_segment(cleaned)
+        qty, is_valid = _extract_quantity_from_segment(order_core)
         if not is_valid:
             is_vi = _is_vietnamese_text(cleaned)
             reason = (
@@ -408,10 +565,16 @@ def _parse_order_request(text: str) -> OrderParseAttempt | None:
     )
 
 
+_EXPLICIT_QUESTION_CUE_PATTERN = re.compile(
+    r"[?？]|\b(?:what|how|which|where|when|who|why|can|could|does|do|is|are|tell\s+me|giá|gia|bao\s+nhiêu|bao\s+nhieu|còn\s+hàng|con\s+hang|còn\s+không|con\s+khong|hết\s+hàng|het\s+hang|phí\s+ship|phi\s+ship|freeship|cod|đổi\s+trả|doi\s+tra|bảo\s+hành|bao\s+hanh|thông\s+tin|thong\s+tin|thông\s+số|thong\s+so|chất\s+liệu|chat\s+lieu|kích\s+thước|kich\s+thuoc|công\s+suất|cong\s+suat|màu\s+gì|mau\s+gi|dùng\s+sao|như\s+thế\s+nào|nhu\s+the\s+nao|tư\s+vấn|tu\s+van|cho\s+hỏi|cho\s+em\s+hỏi|cho\s+minh\s+hoi)\b",
+    re.IGNORECASE,
+)
+
+
 def _fallback_livestream_draft(text: str) -> tuple[Intent, AnswerDraftResponse] | None:
     """Provide grounded livestream draft replies for greetings, general policy queries, and RAG hits."""
     cleaned = text.strip()
-    if not cleaned:
+    if not cleaned or _is_bot_echo_text(cleaned):
         return None
 
     dataset = load_synthetic_data()
@@ -467,6 +630,9 @@ def _fallback_livestream_draft(text: str) -> tuple[Intent, AnswerDraftResponse] 
                 ),
             )
 
+    if not _EXPLICIT_QUESTION_CUE_PATTERN.search(cleaned):
+        return None
+
     rag_hits = get_vector_rag_store(dataset).search(cleaned, top_k=1, min_score=0.18)
     if rag_hits:
         top = rag_hits[0]
@@ -502,6 +668,24 @@ def _fallback_livestream_draft(text: str) -> tuple[Intent, AnswerDraftResponse] 
     return None
 
 
+_COMPLIMENT_ONLY_PATTERN = re.compile(
+    r"\b(?:đẹp\s+quá|dep\s+qua|xịn\s+ghê|xin\s+ghe|xịn\s+quá|xin\s+qua|xinh\s+quá|xinh\s+qua|dễ\s+thương|de\s+thuong|ưng\s+quá|ung\s+qua|thích\s+quá|thich\s+qua|tuyệt\s+vời|tuyet\s+voi|nhìn\s+(?:đẹp|xịn|xinh|sang|ưng)|nhin\s+(?:dep|xin|xinh|sang|ung)|looks?\s+(?:so\s+)?(?:good|great|nice|awesome|pretty|cool)|love\s+this|so\s+(?:pretty|cute|nice))\b",
+    re.IGNORECASE,
+)
+
+
+def _is_pure_compliment(text: str) -> bool:
+    if "?" in text or "？" in text:
+        return False
+    low = text.casefold()
+    unacc = _strip_accents(low)
+    if _EXPLICIT_QUESTION_CUE_PATTERN.search(low) or _EXPLICIT_QUESTION_CUE_PATTERN.search(unacc):
+        return False
+    if _ORDER_ACTION_PATTERN.search(low) or _ORDER_ACTION_PATTERN.search(unacc):
+        return False
+    return bool(_COMPLIMENT_ONLY_PATTERN.search(low) or _COMPLIMENT_ONLY_PATTERN.search(unacc))
+
+
 def _process_comment(
     payload: LiveCommentPayload,
     *,
@@ -511,6 +695,20 @@ def _process_comment(
 ) -> ClassifiedLiveComment:
     safe_comment_id = _to_safe_id(payload.comment_id)
     author_type = payload.author_type.casefold()
+    if _is_bot_echo_text(payload.text) or author_type in {"owner", "moderator"}:
+        return ClassifiedLiveComment(
+            comment_id=safe_comment_id,
+            sender=payload.sender,
+            text=payload.text,
+            author_type=payload.author_type,
+            timestamp=payload.timestamp,
+            intent="unknown",
+            needs_human_review=False,
+            reason=None,
+            moderation_status="allowed",
+            answer_draft=None,
+        )
+
     moderation = moderator.inspect(payload.text)
     if not moderation.allowed:
         return ClassifiedLiveComment(
@@ -524,6 +722,20 @@ def _process_comment(
             reason="Comment blocked by chat moderation.",
             moderation_status="blocked",
             moderation_reason=moderation.reason,
+        )
+
+    if _is_pure_compliment(payload.text):
+        return ClassifiedLiveComment(
+            comment_id=safe_comment_id,
+            sender=payload.sender,
+            text=payload.text,
+            author_type=payload.author_type,
+            timestamp=payload.timestamp,
+            intent="unknown",
+            needs_human_review=False,
+            reason=None,
+            moderation_status="allowed",
+            answer_draft=None,
         )
 
     classification = classify_comment(
@@ -652,6 +864,7 @@ def create_app(
         load_demo_orders(store_id=store_id, session_id=session_id)
     )
     in_memory_stock_sold: dict[str, int] = {}
+    order_lock = asyncio.Lock()
 
     def _upsert_recent_comment(item: ClassifiedLiveComment) -> None:
         for idx, existing in enumerate(recent_comments):
@@ -715,7 +928,10 @@ def create_app(
     ) -> None:
         """Improve Vietnamese Q&A accuracy and ground stock/price answers in live DB inventory."""
         cleaned = text.strip()
+        if not cleaned or _is_bot_echo_text(cleaned) or _is_pure_compliment(cleaned):
+            return
         lowered = cleaned.casefold()
+        unaccented = _strip_accents(lowered)
         is_vi = _is_vietnamese_text(cleaned)
         dataset = load_synthetic_data()
         matched_prods = _find_all_products_in_text(cleaned, dataset.products)
@@ -764,13 +980,17 @@ def create_app(
         # 2. Vietnamese shipping fee / COD / freeship vs delivery time
         asks_shipping_fee_or_cod = bool(
             re.search(
-                r"\b(?:phí\s+ship|tiền\s+ship|ship\s+bao\s+nhiêu|giá\s+ship|freeship|miễn\s+phí\s+(?:ship|vận\s+chuyển)|cod|thu\s+hộ|nhận\s+hàng\s+trả\s+tiền)\b",
+                r"\b(?:phí\s+ship|phi\s+ship|tiền\s+ship|tien\s+ship|ship\s+bao\s+nhiêu|ship\s+bao\s+nhieu|giá\s+ship|gia\s+ship|freeship|miễn\s+phí\s+(?:ship|vận\s+chuyển)|mien\s+phi\s+(?:ship|van\s+chuyen)|cod|thu\s+hộ|thu\s+ho|nhận\s+hàng\s+trả\s+tiền|nhan\s+hang\s+tra\s+tien)\b",
                 lowered,
+            )
+            or re.search(
+                r"\b(?:phi\s+ship|tien\s+ship|ship\s+bao\s+nhieu|gia\s+ship|freeship|cod|thu\s+ho)\b",
+                unaccented,
             )
         )
         asks_delivery_time = bool(
             re.search(
-                r"\b(?:giao\s+(?:hàng\s+)?bao\s+lâu|ship\s+bao\s+lâu|mấy\s+ngày\s+(?:nhận|giao|tới)|bao\s+lâu\s+nhận\s+được|chính\s+sách\s+(?:vận\s+chuyển|giao\s+hàng))\b",
+                r"\b(?:giao\s+(?:hàng\s+)?bao\s+lâu|giao\s+(?:hang\s+)?bao\s+lau|ship\s+bao\s+lâu|ship\s+bao\s+lau|mấy\s+ngày\s+(?:nhận|giao|tới)|may\s+ngay\s+(?:nhan|giao|toi)|bao\s+lâu\s+nhận\s+được|chính\s+sách\s+(?:vận\s+chuyển|giao\s+hàng)|chinh\s+sach\s+(?:van\s+chuyen|giao\s+hang))\b",
                 lowered,
             )
         )
@@ -798,9 +1018,9 @@ def create_app(
                 )
             if sources:
                 ans = (
-                    "Bản nháp (dữ liệu mô phỏng): Shop miễn phí vận chuyển (Freeship) cho đơn từ $30.00 trở lên; đơn dưới $30.00 phí ship tiêu chuẩn là $4.99. Shop có hỗ trợ thanh toán COD (kiểm tra và thanh toán khi nhận hàng), thời gian xuất kho tiêu chuẩn 3 ngày làm việc."
+                    "Bản nháp (dữ liệu mô phỏng): Shop hỗ trợ ship COD toàn quốc (nhận hàng thanh toán). Phí ship tiêu chuẩn $4.99, Freeship cho đơn từ $30.00, xuất kho trong 3 ngày làm việc."
                     if asks_shipping_fee_or_cod
-                    else "Bản nháp (dữ liệu mô phỏng): Theo chính sách vận chuyển, đơn hàng được xử lý và xuất kho trong vòng 3 ngày làm việc (Freeship cho đơn từ $30.00, đơn dưới $30.00 phí ship $4.99)."
+                    else "Bản nháp (dữ liệu mô phỏng): Đơn hàng được xuất kho trong 3 ngày làm việc (Freeship đơn từ $30.00, đơn dưới $30.00 phí ship $4.99)."
                 )
                 result.intent = "shipping_policy"
                 result.needs_human_review = False
@@ -817,10 +1037,16 @@ def create_app(
                 return
 
         # 3. Vietnamese return / exchange policy
-        if re.search(
-            r"\b(?:đổi\s+trả|trả\s+hàng|hoàn\s+trả|chính\s+sách\s+đổi|bảo\s+hành)\b",
-            lowered,
-        ) and not re.search(r"\b(?:hoàn\s+tiền\s+ngay|bắt\s+đền|lừa\s+đảo)\b", lowered):
+        if (
+            re.search(
+                r"\b(?:đổi\s+trả|doi\s+tra|trả\s+hàng|tra\s+hang|hoàn\s+trả|hoan\s+tra|chính\s+sách\s+đổi|chinh\s+sach\s+doi|bảo\s+hành|bao\s+hanh)\b",
+                lowered,
+            )
+            and not re.search(
+                r"\b(?:hoàn\s+tiền\s+ngay|hoan\s+tien\s+ngay|bắt\s+đền|bat\s+den|lừa\s+đảo|lua\s+dao)\b",
+                lowered,
+            )
+        ):
             ret_pol = policies_by_cat.get("returns")
             if ret_pol:
                 result.intent = "return_policy"
@@ -844,19 +1070,28 @@ def create_app(
                 )
                 return
 
-        # 4. Vietnamese price / stock / product info questions
+        # 4. Vietnamese price / stock / explicit product info questions (do NOT trigger on compliments!)
         asks_price_vi = bool(
-            re.search(r"\b(?:giá|bao\s+nhiêu\s+tiền|báo\s+giá|mấy\s+tiền)\b", lowered)
+            re.search(
+                r"\b(?:giá|gia|bao\s+nhiêu\s+tiền|bao\s+nhieu\s+tien|bao\s+nhiêu|bao\s+nhieu|báo\s+giá|bao\s+gia|mấy\s+tiền|may\s+tien)\b",
+                lowered,
+            )
         )
         asks_stock_vi = bool(
-            re.search(r"\b(?:còn\s+hàng|hết\s+hàng|còn\s+không|tồn\s+kho|còn\s+mấy)\b", lowered)
+            re.search(
+                r"\b(?:còn\s+hàng|con\s+hang|hết\s+hàng|het\s+hang|còn\s+không|con\s+khong|tồn\s+kho|ton\s+kho|còn\s+mấy|con\s+may)\b",
+                lowered,
+            )
         )
-        if matched_prods and (
-            asks_price_vi
-            or asks_stock_vi
-            or result.answer_draft is None
-            or result.needs_human_review
-        ):
+        asks_product_info_vi = bool(
+            "?" in cleaned
+            or "？" in cleaned
+            or re.search(
+                r"\b(?:thông\s+tin|thong\s+tin|thông\s+số|thong\s+so|chất\s+liệu|chat\s+lieu|kích\s+thước|kich\s+thuoc|công\s+suất|cong\s+suat|màu\s+gì|mau\s+gi|có\s+màu|co\s+mau|pin\s+bao\s+lâu|dùng\s+sao|như\s+thế\s+nào|nhu\s+the\s+nao|tư\s+vấn|tu\s+van|cho\s+(?:em\s+|mình\s+|minh\s+)?hỏi|cho\s+(?:em\s+|minh\s+)?hoi)\b",
+                lowered,
+            )
+        )
+        if matched_prods and (asks_price_vi or asks_stock_vi or asks_product_info_vi):
             prod = matched_prods[0]
             live_qty = await _get_live_stock(facade, prod.id, prod.stock_quantity)
             prod_source = AnswerSourceResponse(
@@ -879,7 +1114,7 @@ def create_app(
             else:
                 target_intent = "product_information"
                 attrs = ", ".join(f"{k}={v}" for k, v in sorted(prod.attributes.items()))
-                ans = f"Bản nháp (dữ liệu mô phỏng): {prod.name} — {prod.description} (Giá: ${prod.price:.2f}, tồn kho: {live_qty}, thuộc tính: {attrs})."
+                ans = f"Bản nháp (dữ liệu mô phỏng): {prod.name} có giá ${prod.price:.2f}, tồn kho còn {live_qty} sản phẩm (thuộc tính: {attrs})."
 
             result.intent = target_intent
             result.needs_human_review = False
@@ -913,10 +1148,9 @@ def create_app(
         try:
             db_orders = await facade.orders.list_orders(tenant_ctx, limit=500)
             for ord_doc in db_orders:
-                m = re.search(r"\[comment_id:([^\]]+)\]", ord_doc.notes or "")
-                if m:
+                for cid_match in re.findall(r"\[comment_id:([^\]]+)\]", ord_doc.notes or ""):
                     order_by_comment.setdefault(
-                        m.group(1), ord_doc.model_dump(mode="json")
+                        cid_match, ord_doc.model_dump(mode="json")
                     )
         except DatabaseError:
             pass
@@ -1224,14 +1458,84 @@ def create_app(
         )
         facade: StoreDatabaseFacade | None = getattr(app.state, "db", None)
 
-        if result.moderation_status == "allowed":
+        if result.moderation_status == "allowed" and author_type not in {"owner", "moderator"}:
             await _enhance_vietnamese_and_live_stock_qa(facade, payload.text, result)
 
-        order_attempt = (
-            _parse_order_request(payload.text)
-            if result.moderation_status == "allowed"
-            else None
+        can_attempt_order = (
+            result.moderation_status == "allowed"
+            and author_type not in {"owner", "moderator"}
+            and not _is_bot_echo_text(payload.text)
         )
+        order_attempt = (
+            _parse_order_request(payload.text) if can_attempt_order else None
+        )
+
+        def _sync_live_order(updated_doc: OrderDocument) -> None:
+            for idx, existing_ord in enumerate(live_orders):
+                if existing_ord.order_id == updated_doc.order_id:
+                    live_orders[idx] = updated_doc
+                    return
+            live_orders.insert(0, updated_doc)
+
+        def _apply_shipping_update_to_order(
+            ord_doc: OrderDocument,
+            new_phone: str | None,
+            new_addr: str | None,
+            cid: str,
+        ) -> OrderDocument:
+            prev_addr_raw = ord_doc.shipping_address or ""
+            prev_phone = _extract_phone_number(prev_addr_raw)
+            prev_addr: str | None = None
+            if prev_addr_raw and not prev_addr_raw.lower().startswith("pending"):
+                stripped_prev = re.sub(r"\s*\(Phone:[^)]*\)\s*$", "", prev_addr_raw).strip()
+                if stripped_prev and not stripped_prev.lower().startswith("pending"):
+                    prev_addr = stripped_prev
+
+            merged_phone = new_phone or prev_phone
+            merged_addr = new_addr or prev_addr
+            if merged_phone and merged_addr:
+                ord_doc.shipping_address = f"{merged_addr} (Phone: {merged_phone})"[:500]
+                ord_doc.status = "confirmed"
+                ord_doc.payment_status = "cod"
+            elif merged_addr:
+                ord_doc.shipping_address = f"{merged_addr} (Phone: pending)"[:500]
+            elif merged_phone:
+                ord_doc.shipping_address = f"Pending shipping address (Phone: {merged_phone})"[:500]
+
+            tag = f"[comment_id:{cid}]"
+            if tag not in (ord_doc.notes or ""):
+                ord_doc.notes = f"{tag} {ord_doc.notes or ''}".strip()[:1000]
+            _sync_live_order(ord_doc)
+            return ord_doc
+
+        async def _find_viewer_pending_orders(handle: str) -> list[OrderDocument]:
+            candidates: list[OrderDocument] = []
+            seen_ord_ids: set[str] = set()
+            for o in live_orders:
+                if (
+                    o.customer_handle.casefold() == handle.casefold()
+                    and o.status == "pending"
+                    and o.order_id not in seen_ord_ids
+                ):
+                    candidates.append(o)
+                    seen_ord_ids.add(o.order_id)
+            if facade is not None:
+                try:
+                    db_cust_orders = await facade.orders.list_orders(
+                        tenant_ctx, customer_handle=handle, limit=20
+                    )
+                    for o in db_cust_orders:
+                        if (
+                            o.customer_handle.casefold() == handle.casefold()
+                            and o.status == "pending"
+                            and o.order_id not in seen_ord_ids
+                        ):
+                            candidates.append(o)
+                            seen_ord_ids.add(o.order_id)
+                except DatabaseError:
+                    pass
+            return candidates
+
         if order_attempt is not None:
             is_vi = _is_vietnamese_text(payload.text)
             if order_attempt.invalid_quantity_reason is not None:
@@ -1247,70 +1551,7 @@ def create_app(
                     is_draft=True,
                 )
             elif order_attempt.items:
-                out_of_stock_items: list[Any] = []
-                insufficient_items: list[tuple[Any, int, int]] = []
-                for prod, qty in order_attempt.items:
-                    avail_qty = await _get_live_stock(facade, prod.id, prod.stock_quantity)
-                    if avail_qty <= 0:
-                        out_of_stock_items.append(prod)
-                    elif qty > avail_qty:
-                        insufficient_items.append((prod, qty, avail_qty))
-
-                if out_of_stock_items:
-                    oos_names = ", ".join(p.name for p in out_of_stock_items)
-                    oos_sources = [
-                        AnswerSourceResponse(
-                            source_type="product",
-                            source_id=p.id,
-                            title=p.name,
-                            excerpt=p.description,
-                        )
-                        for p in out_of_stock_items
-                    ]
-                    oos_msg = (
-                        f"Bản nháp (dữ liệu mô phỏng): Rất tiếc, sản phẩm {oos_names} hiện đã hết hàng (tồn kho: 0) nên chưa thể lên đơn."
-                        if is_vi
-                        else f"Draft (synthetic demo data): Sorry, {oos_names} is currently out of stock (0 available) and cannot be ordered right now."
-                    )
-                    result.intent = "stock_question"
-                    result.needs_human_review = False
-                    result.reason = None
-                    result.answer_draft = AnswerDraftResponse(
-                        answer=oos_msg,
-                        intent="stock_question",
-                        sources=oos_sources,
-                        status="answered",
-                        needs_human_review=False,
-                        reason=None,
-                        is_draft=True,
-                    )
-                elif insufficient_items:
-                    prod, req_qty, avail_qty = insufficient_items[0]
-                    ins_reason = (
-                        f"Số lượng đặt ({req_qty}) cho {prod.name} vượt quá tồn kho hiện tại (chỉ còn {avail_qty} sản phẩm)."
-                        if is_vi
-                        else f"Requested quantity ({req_qty}) for {prod.name} exceeds available stock ({avail_qty} remaining)."
-                    )
-                    result.intent = "stock_question"
-                    result.needs_human_review = True
-                    result.reason = ins_reason
-                    result.answer_draft = AnswerDraftResponse(
-                        answer=f"Draft: {ins_reason}",
-                        intent="stock_question",
-                        sources=[
-                            AnswerSourceResponse(
-                                source_type="product",
-                                source_id=prod.id,
-                                title=prod.name,
-                                excerpt=prod.description,
-                            )
-                        ],
-                        status="needs_review",
-                        needs_human_review=True,
-                        reason=ins_reason,
-                        is_draft=True,
-                    )
-                else:
+                async with order_lock:
                     clean_handle = payload.sender.strip() or "@viewer"
                     clean_name = clean_handle.lstrip("@").strip() or "Livestream Buyer"
                     customer_id = _to_safe_id(f"cust-{clean_name.lower()}")
@@ -1318,146 +1559,300 @@ def create_app(
                         sorted((p.id, int(q)) for p, q in order_attempt.items)
                     )
 
-                    # Deduplicate consecutive identical pending orders from the same viewer
+                    # Check if viewer already has an identical pending order
                     existing_dup: OrderDocument | None = None
-                    search_orders: list[OrderDocument] = list(live_orders)
-                    if facade is not None:
-                        try:
-                            db_cust_orders = await facade.orders.list_orders(
-                                tenant_ctx, customer_handle=clean_handle, limit=10
-                            )
-                            search_orders = db_cust_orders + search_orders
-                        except DatabaseError:
-                            pass
-                    for prev_ord in search_orders:
-                        if (
-                            prev_ord.customer_handle.casefold() == clean_handle.casefold()
-                            and prev_ord.status == "pending"
-                        ):
-                            prev_sig = tuple(
-                                sorted((it.product_id, int(it.quantity)) for it in prev_ord.items)
-                            )
-                            if prev_sig == requested_sig:
-                                existing_dup = prev_ord
-                                break
+                    for prev_ord in await _find_viewer_pending_orders(clean_handle):
+                        prev_sig = tuple(
+                            sorted((it.product_id, int(it.quantity)) for it in prev_ord.items)
+                        )
+                        if prev_sig == requested_sig:
+                            existing_dup = prev_ord
+                            break
 
-                    if existing_dup is not None:
-                        order_doc = existing_dup
-                    else:
-                        order_id = await _next_order_id(facade)
-                        snapshots: list[OrderItemSnapshot] = []
-                        subtotal = 0.0
-                        for prod, qty in order_attempt.items:
-                            sku_code = f"SKU-{prod.id.replace('SYN-', '')}"
-                            line_total = round(float(prod.price) * qty, 2)
-                            subtotal = round(subtotal + line_total, 2)
-                            snapshots.append(
-                                OrderItemSnapshot(
-                                    product_id=prod.id,
-                                    sku_code=sku_code,
-                                    product_name=prod.name,
-                                    quantity=qty,
-                                    unit_price=float(prod.price),
-                                    line_total=line_total,
-                                )
-                            )
-                        shipping_fee = 0.0 if subtotal >= 30.0 else 4.99
-                        total_amount = round(subtotal + shipping_fee, 2)
-                        has_shipping_details = bool(
-                            order_attempt.phone and order_attempt.shipping_address
-                        )
-                        order_status: OrderStatus = (
-                            "confirmed" if has_shipping_details else "pending"
-                        )
-                        pay_status: PaymentStatus = (
-                            "cod" if has_shipping_details else "unpaid"
-                        )
-                        ship_addr = (
-                            f"{order_attempt.shipping_address} (Phone: {order_attempt.phone})"
-                            if has_shipping_details
-                            else "Pending customer phone & shipping address"
-                        )
-
-                        order_doc = OrderDocument(
-                            store_id=store_id,
-                            order_id=order_id,
-                            session_id=session_id,
-                            customer_id=customer_id,
-                            customer_handle=clean_handle[:256],
-                            customer_name=clean_name[:256],
-                            platform="youtube",
-                            status=order_status,
-                            payment_status=pay_status,
-                            items=snapshots,
-                            subtotal=subtotal,
-                            shipping_fee=shipping_fee,
-                            discount_amount=0.0,
-                            total_amount=total_amount,
-                            currency="USD",
-                            shipping_address=ship_addr[:500],
-                            notes=f"[comment_id:{result.comment_id}] Auto-order from comment: {payload.text[:200]}",
-                        )
-                        live_orders.insert(0, order_doc)
-                        for prod, qty in order_attempt.items:
-                            in_memory_stock_sold[prod.id] = (
-                                in_memory_stock_sold.get(prod.id, 0) + qty
-                            )
-                        if facade is not None:
-                            try:
-                                await facade.orders.upsert_order(tenant_ctx, order_doc)
-                                for prod, qty in order_attempt.items:
-                                    await facade.products.adjust_inventory_quantity(
-                                        tenant_ctx,
-                                        product_id=prod.id,
-                                        delta_on_hand=-qty,
-                                    )
-                            except DatabaseError as exc:
-                                logger.warning("Failed to persist auto-order %s: %s", order_id, exc)
-
-                    items_desc = ", ".join(
-                        f"{it.quantity}x {it.product_name}" for it in order_doc.items
+                    is_followup_shipping_update = bool(
+                        existing_dup is not None
+                        and (order_attempt.phone or order_attempt.shipping_address)
                     )
-                    if is_vi:
-                        status_note = (
-                            "Đã xác nhận thông tin giao hàng COD."
-                            if order_doc.status == "confirmed"
-                            else "Đơn đang ở trạng thái chờ xác nhận (pending) — vui lòng cung cấp SĐT & địa chỉ nhận hàng."
-                        )
-                        confirm_text = (
-                            f"Bản nháp: Đã tạo đơn #{order_doc.order_id} ({items_desc}, tổng ${order_doc.total_amount:.2f}). {status_note}"
-                        )
-                    else:
-                        status_note = (
-                            "Confirmed with shipping details."
-                            if order_doc.status == "confirmed"
-                            else "Status: pending phone & shipping address confirmation."
-                        )
-                        confirm_text = (
-                            f"Draft: Order #{order_doc.order_id} created! {items_desc} "
-                            f"(${order_doc.subtotal:.2f} + ${order_doc.shipping_fee:.2f} ship = ${order_doc.total_amount:.2f}). {status_note}"
-                        )
-                    result.auto_order = order_doc.model_dump(mode="json")
-                    result.lead_score = 98
-                    result.lead_label = "hot"
-                    result.needs_human_review = False
-                    result.reason = None
-                    result.answer_draft = AnswerDraftResponse(
-                        answer=confirm_text,
-                        intent=result.intent,
-                        sources=[
+                    out_of_stock_items: list[Any] = []
+                    insufficient_items: list[tuple[Any, int, int]] = []
+                    if not is_followup_shipping_update:
+                        for prod, qty in order_attempt.items:
+                            avail_qty = await _get_live_stock(
+                                facade, prod.id, prod.stock_quantity
+                            )
+                            if avail_qty <= 0:
+                                out_of_stock_items.append(prod)
+                            elif qty > avail_qty and existing_dup is None:
+                                insufficient_items.append((prod, qty, avail_qty))
+
+                    if out_of_stock_items:
+                        oos_names = ", ".join(p.name for p in out_of_stock_items)
+                        oos_sources = [
                             AnswerSourceResponse(
                                 source_type="product",
-                                source_id=prod.id,
-                                title=prod.name,
-                                excerpt=prod.description,
+                                source_id=p.id,
+                                title=p.name,
+                                excerpt=p.description,
                             )
-                            for prod, _ in order_attempt.items
-                        ],
-                        status="answered",
-                        needs_human_review=False,
-                        reason=None,
-                        is_draft=True,
-                    )
+                            for p in out_of_stock_items
+                        ]
+                        oos_msg = (
+                            f"Bản nháp (dữ liệu mô phỏng): Rất tiếc, sản phẩm {oos_names} hiện đã hết hàng (tồn kho: 0) nên chưa thể lên đơn."
+                            if is_vi
+                            else f"Draft (synthetic demo data): Sorry, {oos_names} is currently out of stock (0 available) and cannot be ordered right now."
+                        )
+                        result.intent = "stock_question"
+                        result.needs_human_review = False
+                        result.reason = None
+                        result.answer_draft = AnswerDraftResponse(
+                            answer=oos_msg,
+                            intent="stock_question",
+                            sources=oos_sources,
+                            status="answered",
+                            needs_human_review=False,
+                            reason=None,
+                            is_draft=True,
+                        )
+                    elif insufficient_items:
+                        prod, req_qty, avail_qty = insufficient_items[0]
+                        ins_reason = (
+                            f"Số lượng đặt ({req_qty}) cho {prod.name} vượt quá tồn kho hiện tại (chỉ còn {avail_qty} sản phẩm)."
+                            if is_vi
+                            else f"Requested quantity ({req_qty}) for {prod.name} exceeds available stock ({avail_qty} remaining)."
+                        )
+                        result.intent = "stock_question"
+                        result.needs_human_review = True
+                        result.reason = ins_reason
+                        result.answer_draft = AnswerDraftResponse(
+                            answer=f"Draft: {ins_reason}",
+                            intent="stock_question",
+                            sources=[
+                                AnswerSourceResponse(
+                                    source_type="product",
+                                    source_id=prod.id,
+                                    title=prod.name,
+                                    excerpt=prod.description,
+                                )
+                            ],
+                            status="needs_review",
+                            needs_human_review=True,
+                            reason=ins_reason,
+                            is_draft=True,
+                        )
+                    else:
+                        if existing_dup is not None:
+                            order_doc = _apply_shipping_update_to_order(
+                                existing_dup,
+                                order_attempt.phone,
+                                order_attempt.shipping_address,
+                                result.comment_id,
+                            )
+                            if facade is not None:
+                                try:
+                                    await facade.orders.upsert_order(tenant_ctx, order_doc)
+                                except DatabaseError as exc:
+                                    logger.warning(
+                                        "Failed to update duplicate order %s: %s",
+                                        order_doc.order_id,
+                                        exc,
+                                    )
+                        else:
+                            order_id = await _next_order_id(facade)
+                            snapshots: list[OrderItemSnapshot] = []
+                            subtotal = 0.0
+                            for prod, qty in order_attempt.items:
+                                sku_code = f"SKU-{prod.id.replace('SYN-', '')}"
+                                line_total = round(float(prod.price) * qty, 2)
+                                subtotal = round(subtotal + line_total, 2)
+                                snapshots.append(
+                                    OrderItemSnapshot(
+                                        product_id=prod.id,
+                                        sku_code=sku_code,
+                                        product_name=prod.name,
+                                        quantity=qty,
+                                        unit_price=float(prod.price),
+                                        line_total=line_total,
+                                    )
+                                )
+                            shipping_fee = 0.0 if subtotal >= 30.0 else 4.99
+                            total_amount = round(subtotal + shipping_fee, 2)
+                            has_shipping_details = bool(
+                                order_attempt.phone and order_attempt.shipping_address
+                            )
+                            order_status: OrderStatus = (
+                                "confirmed" if has_shipping_details else "pending"
+                            )
+                            pay_status: PaymentStatus = (
+                                "cod" if has_shipping_details else "unpaid"
+                            )
+                            if has_shipping_details:
+                                ship_addr = f"{order_attempt.shipping_address} (Phone: {order_attempt.phone})"
+                            elif order_attempt.shipping_address:
+                                ship_addr = f"{order_attempt.shipping_address} (Phone: pending)"
+                            elif order_attempt.phone:
+                                ship_addr = f"Pending shipping address (Phone: {order_attempt.phone})"
+                            else:
+                                ship_addr = "Pending customer phone & shipping address"
+
+                            order_doc = OrderDocument(
+                                store_id=store_id,
+                                order_id=order_id,
+                                session_id=session_id,
+                                customer_id=customer_id,
+                                customer_handle=clean_handle[:256],
+                                customer_name=clean_name[:256],
+                                platform="youtube",
+                                status=order_status,
+                                payment_status=pay_status,
+                                items=snapshots,
+                                subtotal=subtotal,
+                                shipping_fee=shipping_fee,
+                                discount_amount=0.0,
+                                total_amount=total_amount,
+                                currency="USD",
+                                shipping_address=ship_addr[:500],
+                                notes=f"[comment_id:{result.comment_id}] Auto-order from comment: {payload.text[:200]}",
+                            )
+                            live_orders.insert(0, order_doc)
+                            for prod, qty in order_attempt.items:
+                                in_memory_stock_sold[prod.id] = (
+                                    in_memory_stock_sold.get(prod.id, 0) + qty
+                                )
+                            if facade is not None:
+                                try:
+                                    await facade.orders.upsert_order(tenant_ctx, order_doc)
+                                    for prod, qty in order_attempt.items:
+                                        await facade.products.adjust_inventory_quantity(
+                                            tenant_ctx,
+                                            product_id=prod.id,
+                                            delta_on_hand=-qty,
+                                        )
+                                except DatabaseError as exc:
+                                    logger.warning(
+                                        "Failed to persist auto-order %s: %s", order_id, exc
+                                    )
+
+                        items_desc = ", ".join(
+                            f"{it.quantity}x {it.product_name}" for it in order_doc.items
+                        )
+                        if is_vi:
+                            status_note = (
+                                "Đã xác nhận giao hàng COD."
+                                if order_doc.status == "confirmed"
+                                else "Vui lòng nhắn SĐT & địa chỉ nhận hàng."
+                            )
+                            confirm_text = (
+                                f"Bản nháp: Đã tạo đơn #{order_doc.order_id} ({items_desc}, tổng ${order_doc.total_amount:.2f}). {status_note}"
+                            )
+                        else:
+                            status_note = (
+                                "Confirmed COD."
+                                if order_doc.status == "confirmed"
+                                else "Please reply with phone & shipping address."
+                            )
+                            confirm_text = (
+                                f"Draft: Order #{order_doc.order_id} created! {items_desc} "
+                                f"(total ${order_doc.total_amount:.2f}). {status_note}"
+                            )
+                        result.auto_order = order_doc.model_dump(mode="json")
+                        result.lead_score = 98
+                        result.lead_label = "hot"
+                        result.needs_human_review = False
+                        result.reason = None
+                        result.answer_draft = AnswerDraftResponse(
+                            answer=confirm_text,
+                            intent=result.intent,
+                            sources=[
+                                AnswerSourceResponse(
+                                    source_type="product",
+                                    source_id=prod.id,
+                                    title=prod.name,
+                                    excerpt=prod.description,
+                                )
+                                for prod, _ in order_attempt.items
+                            ],
+                            status="answered",
+                            needs_human_review=False,
+                            reason=None,
+                            is_draft=True,
+                        )
+        elif can_attempt_order:
+            # Check if viewer is replying with standalone phone / shipping address for their existing pending order
+            follow_phone = _extract_phone_number(payload.text)
+            follow_addr = _extract_shipping_address(payload.text)
+            if follow_phone and not follow_addr:
+                rem = _PHONE_PATTERN.sub(" ", payload.text)
+                rem = re.sub(
+                    r"\b(?:sđt|sdt|số\s+điện\s+thoại|so\s+dien\s+thoai|điện\s+thoại|dien\s+thoai|phone|tel|của\s+mình|của\s+em)\b\s*[:\-]?",
+                    " ",
+                    rem,
+                    flags=re.IGNORECASE,
+                )
+                rem = re.sub(r"\s+", " ", rem).strip(" ,;:-.")
+                if len(rem) >= 6 and re.search(
+                    r"\b(?:\d+\s+\S+|quận|quan|q\.?\d+|phường|phuong|huyện|huyen|đường|duong|ngõ|ngo|tp\b|hcm|hà\s+nội|ha\s+noi)\b",
+                    rem,
+                    flags=re.IGNORECASE,
+                ):
+                    follow_addr = rem
+
+            if follow_phone or follow_addr:
+                async with order_lock:
+                    clean_handle = payload.sender.strip() or "@viewer"
+                    pending_list = await _find_viewer_pending_orders(clean_handle)
+                    if pending_list:
+                        target_ord = _apply_shipping_update_to_order(
+                            pending_list[0],
+                            follow_phone,
+                            follow_addr,
+                            result.comment_id,
+                        )
+                        if facade is not None:
+                            try:
+                                await facade.orders.upsert_order(tenant_ctx, target_ord)
+                            except DatabaseError as exc:
+                                logger.warning(
+                                    "Failed to persist follow-up shipping update for %s: %s",
+                                    target_ord.order_id,
+                                    exc,
+                                )
+                        is_vi = _is_vietnamese_text(payload.text) or bool(follow_phone)
+                        items_desc = ", ".join(
+                            f"{it.quantity}x {it.product_name}" for it in target_ord.items
+                        )
+                        if is_vi:
+                            status_note = (
+                                "Đã xác nhận thông tin giao hàng COD."
+                                if target_ord.status == "confirmed"
+                                else "Vui lòng bổ sung đủ cả SĐT và địa chỉ nhận hàng."
+                            )
+                            confirm_text = (
+                                f"Bản nháp: Đã cập nhật đơn #{target_ord.order_id} ({items_desc}, tổng ${target_ord.total_amount:.2f}). {status_note}"
+                            )
+                        else:
+                            status_note = (
+                                "Confirmed COD with shipping details."
+                                if target_ord.status == "confirmed"
+                                else "Please provide both phone and shipping address."
+                            )
+                            confirm_text = (
+                                f"Draft: Updated Order #{target_ord.order_id} ({items_desc}, total ${target_ord.total_amount:.2f}). {status_note}"
+                            )
+                        result.auto_order = target_ord.model_dump(mode="json")
+                        result.intent = "consequential_action"
+                        result.lead_score = 98
+                        result.lead_label = "hot"
+                        result.needs_human_review = False
+                        result.reason = None
+                        result.answer_draft = AnswerDraftResponse(
+                            answer=confirm_text,
+                            intent="consequential_action",
+                            sources=[],
+                            status="answered",
+                            needs_human_review=False,
+                            reason=None,
+                            is_draft=True,
+                        )
 
         thread = threads_by_comment.setdefault(result.comment_id, [])
         draft_ready = bool(
@@ -1792,6 +2187,87 @@ def create_app(
             "storage_mode": "synthetic_memory",
             "items": [o.model_dump(mode="json") for o in filtered_orders],
         }
+
+    @app.post("/api/store/orders/{order_id}/status")
+    @app.patch("/api/store/orders/{order_id}/status")
+    async def update_store_order_status(
+        order_id: str,
+        payload: OrderUpdateStatusRequest,
+    ) -> dict[str, Any]:
+        safe_order_id = _to_safe_id(order_id)
+        facade: StoreDatabaseFacade | None = getattr(app.state, "db", None)
+        async with order_lock:
+            target_order: OrderDocument | None = None
+            if facade is not None:
+                try:
+                    target_order = await facade.orders.get_by_id(tenant_ctx, safe_order_id)
+                except DatabaseError:
+                    target_order = None
+            if target_order is None:
+                for o in live_orders:
+                    if o.order_id == safe_order_id:
+                        target_order = o
+                        break
+            if target_order is None:
+                raise HTTPException(
+                    status_code=404,
+                    detail={"code": "order_not_found", "message": f"Order {safe_order_id} not found."},
+                )
+
+            previous_status = target_order.status
+            target_order.status = payload.status
+            if payload.payment_status is not None:
+                target_order.payment_status = payload.payment_status
+            elif payload.status == "confirmed" and target_order.payment_status == "unpaid":
+                target_order.payment_status = "cod"
+            elif payload.status == "cancelled" and target_order.payment_status == "unpaid":
+                target_order.payment_status = "unpaid"
+
+            if payload.shipping_address is not None:
+                target_order.shipping_address = payload.shipping_address[:500]
+            if payload.notes is not None:
+                target_order.notes = payload.notes[:1000]
+
+            # Restore inventory when cancelling a previously active order
+            if previous_status != "cancelled" and payload.status == "cancelled":
+                for item in target_order.items:
+                    in_memory_stock_sold[item.product_id] = max(
+                        0, in_memory_stock_sold.get(item.product_id, 0) - item.quantity
+                    )
+                    if facade is not None:
+                        try:
+                            await facade.products.adjust_inventory_quantity(
+                                tenant_ctx,
+                                product_id=item.product_id,
+                                delta_on_hand=item.quantity,
+                            )
+                        except DatabaseError as exc:
+                            logger.warning(
+                                "Failed to restore inventory for cancelled order %s: %s",
+                                safe_order_id,
+                                exc,
+                            )
+
+            for idx, existing_ord in enumerate(live_orders):
+                if existing_ord.order_id == safe_order_id:
+                    live_orders[idx] = target_order
+                    break
+            else:
+                live_orders.insert(0, target_order)
+
+            if facade is not None:
+                try:
+                    target_order = await facade.orders.upsert_order(tenant_ctx, target_order)
+                except DatabaseError as exc:
+                    logger.warning("Failed to persist status update for order %s: %s", safe_order_id, exc)
+
+            # Also refresh auto_order snapshot on any matching recent comment in memory
+            order_dump = target_order.model_dump(mode="json")
+            for c in recent_comments:
+                if c.auto_order and c.auto_order.get("order_id") == safe_order_id:
+                    c.auto_order = order_dump
+
+            return {"updated": True, "order": order_dump}
 
     @app.post("/api/store/seed")
     async def trigger_seed() -> dict[str, Any]:

@@ -13,8 +13,8 @@ Báo cáo kiểm thử tự động xác minh luồng thu thập bình luận li
 | Số bình luận khôi phục khi khởi động lại (`Cold-Start Repository Read`) | 300 |
 | Số bình luận bị mất (`Lost comments`) | **0** |
 | Số bản ghi bị nhân đôi (`Duplicate records`) | **0** |
-| Độ trễ xử lý trung bình (`Mean latency`) | 6.05 ms |
-| Độ trễ phân vị `p50 / p95 / p99` | 5.64 ms / 11.69 ms / 14.78 ms |
+| Độ trễ xử lý trung bình (`Mean latency`) | 4.65 ms |
+| Độ trễ phân vị `p50 / p95 / p99` | 4.74 ms / 6.82 ms / 8.01 ms |
 
 ## 2. Xác minh Database Design (`livestream_sales_db` - 13 Collections & 7 Redis Key Patterns)
 

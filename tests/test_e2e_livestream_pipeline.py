@@ -450,15 +450,21 @@ class LivestreamEndToEndTests(unittest.TestCase):
 
             self.assertTrue(db_file.exists())
 
-            # Second server process loads from the same disk file (fresh app instance with empty RAM)
+            # Second server process loads from the same disk file and runs seed_demo_store_data on startup
             mongo_2 = EmbeddedMongoDatabaseManager("livestream_sales_db", persist_path=db_file)
             facade_2 = StoreDatabaseFacade(mongo_2, EmbeddedRedisManager())  # type: ignore[arg-type]
+            run_coroutine_sync(seed_demo_store_data(facade_2, ctx, session_id="youtube-live"))
             app_2 = create_app(db_facade=facade_2)
             with InProcessAppClient(app_2) as client_2:
                 comments_2 = client_2.get("/api/plugin/comments").json()
                 self.assertEqual(len(comments_2), 1)
                 self.assertIsNotNone(comments_2[0]["auto_order"])
                 self.assertEqual(comments_2[0]["auto_order"]["order_id"], created_order_id)
+
+                # Verify inventory was NOT reset to 40 by seed_demo_store_data (must remain 39 after 1 mug sold)
+                prods_2 = client_2.get("/api/store/products").json()["items"]
+                mug_prod = next(p for p in prods_2 if p["product_id"] == "SYN-PROD-002")
+                self.assertEqual(mug_prod["stock_quantity"], 39)
 
                 # Creating a new order after restart must NOT collide with created_order_id
                 next_res = client_2.post(
@@ -473,6 +479,194 @@ class LivestreamEndToEndTests(unittest.TestCase):
                 ).json()
                 self.assertIsNotNone(next_res["auto_order"])
                 self.assertNotEqual(next_res["auto_order"]["order_id"], created_order_id)
+
+    def test_echo_loop_prevention_compliment_filter_and_owner_skip(self) -> None:
+        facade = build_repository_backed_facade()
+        ctx = TenantContext.system_context("default-store")
+        run_coroutine_sync(seed_demo_store_data(facade, ctx, session_id="youtube-live"))
+        app = create_app(db_facade=facade)
+
+        with InProcessAppClient(app) as client:
+            # 1. Bot's own order confirmation read back WITHOUT emoji 🤖 (as when YouTube renders <img class="emoji" alt="🤖">)
+            echo_order_res = client.post(
+                "/api/plugin/comments",
+                json={
+                    "id": "echo-ord-1",
+                    "sender": "@BotChannel",
+                    "text": "@Viewer Order #ORD-LIVE-0006 created! 1x LumaNest Desk Lamp ($24.50 + $4.99 ship = $29.49). Status: pending phone & shipping address confirmation.",
+                    "authorType": "viewer",
+                    "timestamp": 1791568960000,
+                },
+            ).json()
+            self.assertIsNone(echo_order_res["auto_order"])
+            self.assertIsNone(echo_order_res["answer_draft"])
+
+            # 2. Bot's own price answer read back WITHOUT emoji 🤖
+            echo_price_res = client.post(
+                "/api/plugin/comments",
+                json={
+                    "id": "echo-price-1",
+                    "sender": "@BotChannel",
+                    "text": "@Viewer Sản phẩm LumaNest Desk Lamp có giá niêm yết là $24.50 (còn 12 sản phẩm).",
+                    "authorType": "viewer",
+                    "timestamp": 1791568961000,
+                },
+            ).json()
+            self.assertIsNone(echo_price_res["auto_order"])
+            self.assertIsNone(echo_price_res["answer_draft"])
+
+            # 3. Channel owner comment is ignored for auto-order and auto-reply
+            owner_res = client.post(
+                "/api/plugin/comments",
+                json={
+                    "id": "owner-c-1",
+                    "sender": "@ChannelOwner",
+                    "text": "mua 2 đèn bàn giá bao nhiêu?",
+                    "authorType": "owner",
+                    "timestamp": 1791568962000,
+                },
+            ).json()
+            self.assertIsNone(owner_res["auto_order"])
+            self.assertIsNone(owner_res["answer_draft"])
+
+            # 4. Viewer compliments ("mình thấy đèn bàn đẹp quá", "quạt nhìn xịn ghê") must NOT spam product catalog replies
+            for idx, comp_text in enumerate(
+                ["mình thấy đèn bàn đẹp quá", "quạt nhìn xịn ghê", "son màu xinh quá"]
+            ):
+                comp_res = client.post(
+                    "/api/plugin/comments",
+                    json={
+                        "id": f"compliment-{idx}",
+                        "sender": f"@Complimenter_{idx}",
+                        "text": comp_text,
+                        "authorType": "viewer",
+                        "timestamp": 1791568963000 + idx,
+                    },
+                ).json()
+                self.assertIsNone(comp_res["auto_order"])
+                self.assertIsNone(
+                    comp_res["answer_draft"],
+                    f"Compliment should not trigger auto-reply: {comp_text}",
+                )
+
+    def test_unaccented_vietnamese_quantity_disambiguation_and_followup_shipping(self) -> None:
+        facade = build_repository_backed_facade()
+        ctx = TenantContext.system_context("default-store")
+        run_coroutine_sync(seed_demo_store_data(facade, ctx, session_id="youtube-live"))
+        app = create_app(db_facade=facade)
+
+        with InProcessAppClient(app) as client:
+            # 1. Unaccented Vietnamese and natural order closing phrases
+            unaccented_cases = [
+                ("unacc-1", "chot 1 den ban", "SYN-PROD-001", 1),
+                ("unacc-2", "dat 1 coc su", "SYN-PROD-002", 1),
+                ("unacc-3", "lay 1 quat cam tay", "SYN-PROD-009", 1),
+                ("unacc-4", "mua 1 binh giu nhiet", "SYN-PROD-012", 1),
+                ("unacc-5", "cho em 1 den ban", "SYN-PROD-001", 1),
+            ]
+            for cid, text, expected_pid, expected_qty in unaccented_cases:
+                res = client.post(
+                    "/api/plugin/comments",
+                    json={
+                        "id": cid,
+                        "sender": f"@UnaccBuyer_{cid}",
+                        "text": text,
+                        "authorType": "viewer",
+                        "timestamp": 1791568970000,
+                    },
+                ).json()
+                self.assertIsNotNone(res["auto_order"], f"Failed to create order for: {text}")
+                self.assertEqual(res["auto_order"]["items"][0]["product_id"], expected_pid)
+                self.assertEqual(res["auto_order"]["items"][0]["quantity"], expected_qty)
+
+            # 2. Quantity disambiguation from street numbers, product codes, district numbers, and unit suffixes (2x, 3c)
+            disambig_cases = [
+                ("dis-1", "mua đèn bàn địa chỉ 123 Nguyễn Huệ Q1 SĐT 0912345678", "SYN-PROD-001", 1, "confirmed"),
+                ("dis-2", "chốt đèn bàn giao tới 15 Lê Lợi 0912345678", "SYN-PROD-001", 1, "confirmed"),
+                ("dis-3", "buy SYN-PROD-007", "SYN-PROD-007", 1, "pending"),
+                ("dis-4", "mua đèn bàn ở quận 3", "SYN-PROD-001", 1, "pending"),
+                ("dis-5", "mua 2x đèn bàn", "SYN-PROD-001", 2, "pending"),
+                ("dis-6", "chốt 3c cốc sứ", "SYN-PROD-002", 3, "pending"),
+            ]
+            for cid, text, expected_pid, expected_qty, expected_status in disambig_cases:
+                res = client.post(
+                    "/api/plugin/comments",
+                    json={
+                        "id": cid,
+                        "sender": f"@DisBuyer_{cid}",
+                        "text": text,
+                        "authorType": "viewer",
+                        "timestamp": 1791568975000,
+                    },
+                ).json()
+                self.assertIsNotNone(res["auto_order"], f"Failed on: {text}")
+                self.assertEqual(res["auto_order"]["items"][0]["product_id"], expected_pid)
+                self.assertEqual(
+                    res["auto_order"]["items"][0]["quantity"],
+                    expected_qty,
+                    f"Wrong quantity parsed for: {text}",
+                )
+                self.assertEqual(res["auto_order"]["status"], expected_status)
+
+            # 3. English false positives ("huge fan", "my son") must NOT create orders
+            for idx, fp_en in enumerate(
+                [
+                    "I am a huge fan, give me a shoutout!",
+                    "my son loves this livestream, I want to buy something later",
+                ]
+            ):
+                fp_res = client.post(
+                    "/api/plugin/comments",
+                    json={
+                        "id": f"fp-en-{idx}",
+                        "sender": f"@EnViewer_{idx}",
+                        "text": fp_en,
+                        "authorType": "viewer",
+                        "timestamp": 1791568980000 + idx,
+                    },
+                ).json()
+                self.assertIsNone(fp_res["auto_order"], f"False positive order created for: {fp_en}")
+
+            # 4. Comma-separated address, dot/space phone, and follow-up shipping update on pending order
+            p_ord = client.post(
+                "/api/plugin/comments",
+                json={
+                    "id": "followup-step-1",
+                    "sender": "@FollowUpViewer",
+                    "text": "chốt 1 cốc sứ",
+                    "authorType": "viewer",
+                    "timestamp": 1791568985000,
+                },
+            ).json()
+            self.assertIsNotNone(p_ord["auto_order"])
+            self.assertEqual(p_ord["auto_order"]["status"], "pending")
+            pending_order_id = p_ord["auto_order"]["order_id"]
+
+            # Follow-up standalone phone (with dots) + address (with commas) upgrades the pending order to confirmed + cod
+            u_ord = client.post(
+                "/api/plugin/comments",
+                json={
+                    "id": "followup-step-2",
+                    "sender": "@FollowUpViewer",
+                    "text": "SĐT 0912.345.678 địa chỉ: 123 Nguyễn Huệ, Quận 1, TP HCM",
+                    "authorType": "viewer",
+                    "timestamp": 1791568986000,
+                },
+            ).json()
+            self.assertIsNotNone(u_ord["auto_order"])
+            self.assertEqual(u_ord["auto_order"]["order_id"], pending_order_id)
+            self.assertEqual(u_ord["auto_order"]["status"], "confirmed")
+            self.assertEqual(u_ord["auto_order"]["payment_status"], "cod")
+            self.assertIn("123 Nguyễn Huệ, Quận 1, TP HCM", u_ord["auto_order"]["shipping_address"])
+            self.assertIn("0912345678", u_ord["auto_order"]["shipping_address"])
+
+            # 5. Dashboard Order Status Management API (Confirm / Cancel & Restore Stock)
+            cancel_res = client.post(
+                f"/api/store/orders/{pending_order_id}/status",
+                json={"status": "cancelled"},
+            )
+            self.assertEqual(cancel_res.status_code, 200)
+            self.assertEqual(cancel_res.json()["order"]["status"], "cancelled")
 
 
 if __name__ == "__main__":

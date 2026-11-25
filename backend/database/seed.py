@@ -88,6 +88,8 @@ async def seed_demo_store_data(
     facade: StoreDatabaseFacade,
     tenant_ctx: TenantContext,
     session_id: str = "youtube-live",
+    *,
+    reset_existing: bool = False,
 ) -> dict[str, int]:
     """Seed users, store, products, inventory, FAQs, policies, customers, session, and orders."""
     store_id = tenant_ctx.store_id
@@ -184,18 +186,22 @@ async def seed_demo_store_data(
         seeded_product_docs.append(prod_doc)
         counts["products"] += 1
 
-        await facade.products.upsert_inventory(
-            tenant_ctx,
-            InventoryDocument(
-                store_id=store_id,
-                inventory_id=f"INV-{product.id}",
-                product_id=product.id,
-                quantity_on_hand=product.stock_quantity,
-                quantity_reserved=0,
-                in_stock=product.stock_quantity > 0,
-                stock_note="Seeded from synthetic catalog",
-            ),
+        existing_inv = await facade.products.get_inventory(
+            tenant_ctx, product_id=product.id
         )
+        if reset_existing or existing_inv is None:
+            await facade.products.upsert_inventory(
+                tenant_ctx,
+                InventoryDocument(
+                    store_id=store_id,
+                    inventory_id=f"INV-{product.id}",
+                    product_id=product.id,
+                    quantity_on_hand=product.stock_quantity,
+                    quantity_reserved=0,
+                    in_stock=product.stock_quantity > 0,
+                    stock_note="Seeded from synthetic catalog",
+                ),
+            )
         counts["inventory"] += 1
 
         if has_color_variant:
@@ -303,7 +309,8 @@ async def seed_demo_store_data(
                 ),
             )
             counts["customers"] += 1
-        await facade.orders.upsert_order(tenant_ctx, order)
+        if reset_existing or await facade.orders.get_by_id(tenant_ctx, order.order_id) is None:
+            await facade.orders.upsert_order(tenant_ctx, order)
         counts["orders"] += 1
 
     # 7. Populate Redis Data Structures (Section 3.2.4.2) when Redis is attached

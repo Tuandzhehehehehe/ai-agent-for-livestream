@@ -79,6 +79,17 @@ export default function LivestreamDashboardPage() {
     }
   };
 
+  const updateOrderStatus = async (orderId, nextStatus) => {
+    const res = await fetch(`${API_BASE}/api/store/orders/${encodeURIComponent(orderId)}/status`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: nextStatus }),
+    });
+    if (res.ok) {
+      await fetchOverview();
+    }
+  };
+
   return (
     <div style={{ maxWidth: 1280, margin: '0 auto', padding: '24px' }}>
       <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
@@ -233,8 +244,30 @@ export default function LivestreamDashboardPage() {
                 <div style={{ fontSize: 12, color: '#cbd5e1', marginTop: 4 }}>
                   {(o.items || []).map((it) => `${it.product_name} x${it.quantity}`).join(', ')}
                 </div>
-                <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 3 }}>
-                  Total: ${Number(o.total_amount).toFixed(2)} • {o.shipping_address}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 6, gap: 8 }}>
+                  <div style={{ fontSize: 11, color: '#94a3b8' }}>
+                    Total: ${Number(o.total_amount).toFixed(2)} • {o.shipping_address}
+                  </div>
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    {o.status === 'pending' && (
+                      <button
+                        type="button"
+                        onClick={() => updateOrderStatus(o.order_id, 'confirmed')}
+                        style={{ padding: '4px 10px', fontSize: 11, borderRadius: 6, border: 0, background: '#059669', color: '#fff', fontWeight: 600, cursor: 'pointer' }}
+                      >
+                        Confirm COD
+                      </button>
+                    )}
+                    {(o.status === 'pending' || o.status === 'confirmed') && (
+                      <button
+                        type="button"
+                        onClick={() => updateOrderStatus(o.order_id, 'cancelled')}
+                        style={{ padding: '4px 10px', fontSize: 11, borderRadius: 6, border: 0, background: '#dc2626', color: '#fff', fontWeight: 600, cursor: 'pointer' }}
+                      >
+                        Cancel Order
+                      </button>
+                    )}
+                  </div>
                 </div>
               </div>
             ))}

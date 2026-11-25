@@ -45,6 +45,7 @@ from backend.database.seed import seed_demo_store_data
 from backend.main import (
     AgentChatRequest,
     LiveCommentPayload,
+    OrderUpdateStatusRequest,
     ThreadMessage,
     VectorRAGSearchRequest,
     create_app,
@@ -186,6 +187,8 @@ class InProcessAppClient:
                     kwargs[param_name] = AgentChatRequest.model_validate(json_body)
                 elif ann in (VectorRAGSearchRequest, "VectorRAGSearchRequest"):
                     kwargs[param_name] = VectorRAGSearchRequest.model_validate(json_body)
+                elif ann in (OrderUpdateStatusRequest, "OrderUpdateStatusRequest"):
+                    kwargs[param_name] = OrderUpdateStatusRequest.model_validate(json_body)
                 else:
                     kwargs[param_name] = json_body
             elif isinstance(param.default, BaseModel) or hasattr(param.default, "default"):

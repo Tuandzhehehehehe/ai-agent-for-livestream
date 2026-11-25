@@ -2,6 +2,7 @@
 (() => {
   const BUTTON_ID = 'livestream-ai-custom-button';
   const PANEL_ID = 'livestream-ai-settings-panel';
+  const CHAT_TOOLBAR_ID = 'livestream-ai-chat-toolbar';
   const ROW_ID = 'livestream-ai-message-row';
   const POPOVER_ID = 'livestream-ai-detail-popover';
   const MAX_CHIPS = 50;
@@ -9,6 +10,7 @@
   const seenIds = new Set();
   const aiMessages = new Map();
   const sentAiTexts = new Set();
+  const sentAiSignatures = new Set();
   const autoRepliedIds = new Set();
   const chatSendQueue = [];
   const CHAT_SEND_COOLDOWN_MS = 1800;
@@ -28,6 +30,101 @@
   let playerRaf = null;
   let playerBtn = null;
 
+  function truncateAtWordBoundary(str, maxLen = 195) {
+    if (str.length <= maxLen) return str;
+    const limit = maxLen - 1;
+    const sliced = str.slice(0, limit);
+    const lastSpace = sliced.lastIndexOf(' ');
+    if (lastSpace >= Math.floor(maxLen * 0.6)) {
+      return `${sliced.slice(0, lastSpace).replace(/[,;:\s]+$/, '')}…`;
+    }
+    return `${sliced}…`;
+  }
+
+  function normalizeReplySignature(raw) {
+    return String(raw || '')
+      .replace(/🤖/g, '')
+      .replace(/^\[AI\]\s*/i, '')
+      .replace(/^@[A-Za-z0-9_.-]+\s+/i, '')
+      .replace(/…|\.\.\./g, '')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .toLowerCase();
+  }
+
+  function rememberSentAiText(text) {
+    const trimmed = String(text || '').trim();
+    if (!trimmed) return;
+    sentAiTexts.add(trimmed);
+    const withoutEmoji = trimmed.replace(/^🤖\s*/, '').trim();
+    if (withoutEmoji) {
+      sentAiTexts.add(withoutEmoji);
+    }
+    const sig = normalizeReplySignature(trimmed);
+    if (sig) {
+      sentAiSignatures.add(sig);
+      if (sig.length > 48) {
+        sentAiSignatures.add(sig.slice(0, 48));
+      }
+    }
+  }
+
+  function extractCommentText(messageEl) {
+    if (!messageEl) return '';
+    let out = '';
+    const walk = (node) => {
+      if (!node) return;
+      if (node.nodeType === 3) {
+        out += node.nodeValue || '';
+      } else if (node.nodeType === 1) {
+        if (node.tagName === 'IMG') {
+          out += node.getAttribute('alt') || node.getAttribute('data-emoji-id') || '';
+        } else {
+          node.childNodes.forEach(walk);
+        }
+      }
+    };
+    walk(messageEl);
+    return out.replace(/\s+/g, ' ').trim();
+  }
+
+  function isBotOrEchoComment(node, text, authorType) {
+    const normAuthor = String(authorType || '').toLowerCase();
+    if (normAuthor === 'owner' || normAuthor === 'moderator') {
+      return true;
+    }
+    if (
+      node.hasAttribute?.('author-is-owner') ||
+      node.querySelector?.(
+        'yt-live-chat-author-badge-renderer[type="owner"], yt-live-chat-author-badge-renderer[type="moderator"], #author-name.owner, #author-name.moderator'
+      )
+    ) {
+      return true;
+    }
+    if (node.querySelector?.('#message img[alt*="🤖"]')) {
+      return true;
+    }
+    if (
+      text.startsWith('🤖') ||
+      text.startsWith('[AI]') ||
+      sentAiTexts.has(text)
+    ) {
+      return true;
+    }
+    const sig = normalizeReplySignature(text);
+    if (sig && (sentAiSignatures.has(sig) || (sig.length > 48 && sentAiSignatures.has(sig.slice(0, 48))))) {
+      return true;
+    }
+    if (
+      /(?:Order\s+#ORD-(?:LIVE|DEMO)-\d+\s+created!|Đã\s+tạo\s+đơn\s+#ORD-(?:LIVE|DEMO)-\d+|Đã\s+cập\s+nhật\s+đơn\s+#ORD-(?:LIVE|DEMO)-\d+|Draft\s*\(synthetic\s+demo\s+data\)|Bản\s+nháp\s*\(dữ\s+liệu\s+mô\s+phỏng\)|the\s+catalog\s+lists\s+\d+\s+simulated\s+units|có\s+giá\s+niêm\s+yết\s+là\s+\$\d)/i.test(
+        text
+      )
+    ) {
+      return true;
+    }
+    return false;
+  }
+
   function formatPublicChatReply(sender, rawAnswer) {
     const handle = String(sender || '').replace(/^@+/, '').trim();
     const cleaned = String(rawAnswer || '')
@@ -39,7 +136,18 @@
     if (!cleaned) return '';
     const prefix = handle ? `🤖 @${handle} ` : '🤖 ';
     const full = `${prefix}${cleaned}`;
-    return full.length > 195 ? `${full.slice(0, 192)}...` : full;
+    return truncateAtWordBoundary(full, 195);
+  }
+
+  function updateCommentSendStatus(commentId, status) {
+    if (!commentId || !aiMessages.has(commentId)) return;
+    const rec = aiMessages.get(commentId);
+    rec.chat_send_status = status;
+    aiMessages.set(commentId, rec);
+    upsertChip(rec);
+    if (selectedId === commentId && popover && !popover.hidden) {
+      openPopover(rec);
+    }
   }
 
   function resolveChatDocument() {
@@ -61,6 +169,7 @@
       new InputEvent('beforeinput', {
         bubbles: true,
         cancelable: true,
+        composed: true,
         data: text,
         inputType: 'insertText'
       })
@@ -80,11 +189,21 @@
       new InputEvent('input', {
         bubbles: true,
         cancelable: true,
+        composed: true,
         data: text,
         inputType: 'insertText'
       })
     );
-    inputEl.dispatchEvent(new Event('change', { bubbles: true }));
+    inputEl.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+    inputEl.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
+    inputEl.dispatchEvent(
+      new KeyboardEvent('keyup', {
+        key: ' ',
+        code: 'Space',
+        bubbles: true,
+        composed: true
+      })
+    );
   }
 
   function processNextQueuedChatReply() {
@@ -107,10 +226,8 @@
 
     if (restricted || !inputEl || inputEl.getAttribute('contenteditable') === 'false') {
       const failedItem = chatSendQueue.shift();
-      if (failedItem?.commentId && aiMessages.has(failedItem.commentId)) {
-        const rec = aiMessages.get(failedItem.commentId);
-        rec.chat_send_status = 'blocked_or_restricted';
-        aiMessages.set(failedItem.commentId, rec);
+      if (failedItem?.commentId) {
+        updateCommentSendStatus(failedItem.commentId, 'blocked_or_restricted');
       }
       if (chatSendQueue.length) {
         setTimeout(processNextQueuedChatReply, CHAT_SEND_COOLDOWN_MS);
@@ -130,7 +247,7 @@
 
     isProcessingChatQueue = true;
     const { commentId, text } = chatSendQueue.shift();
-    sentAiTexts.add(text);
+    rememberSentAiText(text);
     setEditableTextModern(chatDoc, inputEl, text);
 
     setTimeout(() => {
@@ -156,30 +273,52 @@
             keyCode: 13,
             which: 13,
             bubbles: true,
-            cancelable: true
+            cancelable: true,
+            composed: true
           })
         );
       }
 
-      setTimeout(() => {
+      let attempts = 0;
+      const maxAttempts = 6;
+      const verifySent = () => {
+        attempts += 1;
         const remaining = (inputEl.textContent || '').trim();
         const errorToast = chatDoc.querySelector('yt-live-chat-toast-renderer[is-showing]');
-        const sentOk = remaining === '' && !errorToast;
-        if (!sentOk && remaining === text) {
+        if (remaining === '' && !errorToast) {
+          updateCommentSendStatus(commentId, 'sent');
+          isProcessingChatQueue = false;
+          if (chatSendQueue.length) {
+            setTimeout(processNextQueuedChatReply, CHAT_SEND_COOLDOWN_MS);
+          }
+          return;
+        }
+        if (attempts < maxAttempts && !errorToast) {
+          if (attempts === 2) {
+            const retryBtn =
+              inputRenderer?.querySelector(
+                '#send-button button, yt-button-renderer#send-button button, yt-icon-button#button button'
+              ) ||
+              chatDoc.querySelector('yt-live-chat-message-input-renderer #send-button button');
+            if (retryBtn && !retryBtn.disabled && retryBtn.getAttribute('aria-disabled') !== 'true') {
+              retryBtn.click();
+            }
+          }
+          setTimeout(verifySent, 220);
+          return;
+        }
+        if (remaining === text) {
           inputEl.textContent = '';
-          inputEl.dispatchEvent(new InputEvent('input', { bubbles: true }));
+          inputEl.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true }));
         }
-        if (commentId && aiMessages.has(commentId)) {
-          const rec = aiMessages.get(commentId);
-          rec.chat_send_status = sentOk ? 'sent' : 'failed';
-          aiMessages.set(commentId, rec);
-        }
+        updateCommentSendStatus(commentId, errorToast ? 'blocked_or_restricted' : 'failed');
         isProcessingChatQueue = false;
         if (chatSendQueue.length) {
           setTimeout(processNextQueuedChatReply, CHAT_SEND_COOLDOWN_MS);
         }
-      }, 280);
-    }, 120);
+      };
+      setTimeout(verifySent, 250);
+    }, 150);
   }
 
   function enqueueYouTubeLiveChatReply(commentId, messageText) {
@@ -188,6 +327,8 @@
     if (chatSendQueue.some((item) => item.commentId === commentId || item.text === text)) {
       return false;
     }
+    rememberSentAiText(text);
+    updateCommentSendStatus(commentId, 'queued');
     chatSendQueue.push({ commentId, text });
     processNextQueuedChatReply();
     return true;
@@ -266,9 +407,65 @@
     node?.nodeType === 1 &&
     Boolean(
       node.closest?.(
-        `#${ROW_ID}, #${POPOVER_ID}, #${BUTTON_ID}, #${PANEL_ID}`
+        `#${ROW_ID}, #${POPOVER_ID}, #${BUTTON_ID}, #${PANEL_ID}, #${CHAT_TOOLBAR_ID}`
       )
     );
+
+  function ensureChatToolbar() {
+    const root = document.querySelector('yt-live-chat-renderer');
+    if (!root) return null;
+
+    let toolbar = document.getElementById(CHAT_TOOLBAR_ID);
+    if (!toolbar) {
+      toolbar = el('div');
+      toolbar.id = CHAT_TOOLBAR_ID;
+      toolbar.setAttribute('role', 'toolbar');
+      toolbar.setAttribute('aria-label', 'Livestream AI Assistant Controls');
+
+      const title = el('span', 'livestream-ai-toolbar-brand', 'AI Live');
+
+      const collectorBtn = el('button', 'livestream-ai-toolbar-toggle');
+      collectorBtn.type = 'button';
+      collectorBtn.dataset.toggle = 'collector';
+      collectorBtn.setAttribute('aria-pressed', String(isEnabled));
+      collectorBtn.textContent = isEnabled ? 'Collector: ON' : 'Collector: OFF';
+      collectorBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        setAssistantEnabled(!isEnabled, { broadcast: true });
+      });
+
+      const autoReplyBtn = el('button', 'livestream-ai-toolbar-toggle');
+      autoReplyBtn.type = 'button';
+      autoReplyBtn.dataset.toggle = 'auto-reply';
+      autoReplyBtn.setAttribute('aria-pressed', String(isAutoReplyEnabled));
+      autoReplyBtn.textContent = isAutoReplyEnabled ? 'Auto-Reply: ON' : 'Auto-Reply: OFF';
+      autoReplyBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        setAutoReplyEnabled(!isAutoReplyEnabled, { broadcast: true });
+      });
+
+      const dashBtn = el('button', 'livestream-ai-toolbar-dash', 'Dashboard ↗');
+      dashBtn.type = 'button';
+      dashBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        sendRuntimeMessage({ type: 'OPEN_DASHBOARD' }, (res, error) => {
+          if (error || !res?.success) {
+            window.open('http://127.0.0.1:8000/dashboard', '_blank', 'noopener,noreferrer');
+          }
+        });
+      });
+
+      toolbar.append(title, collectorBtn, autoReplyBtn, dashBtn);
+    }
+
+    const header = root.querySelector('yt-live-chat-header-renderer');
+    if (header && header.nextElementSibling !== toolbar) {
+      header.insertAdjacentElement('afterend', toolbar);
+    } else if (!header && root.firstElementChild !== toolbar) {
+      root.insertAdjacentElement('afterbegin', toolbar);
+    }
+    return toolbar;
+  }
 
   function ensureAiRow() {
     if (aiRow?.id === ROW_ID) return aiRow;
@@ -399,6 +596,22 @@
     } else if (record.answer_draft?.status === 'answered') {
       badges.appendChild(
         el('span', 'livestream-ai-popover-badge is-answered', 'Draft Ready')
+      );
+    }
+
+    if (record.chat_send_status) {
+      const statusLabels = {
+        queued: ['Chat: Queued ⏳', ''],
+        sent: ['Chat: Sent ✓', ' is-answered'],
+        failed: ['Chat: Send Failed ⚠', ' is-error'],
+        blocked_or_restricted: ['Chat: Restricted ⛔', ' is-review']
+      };
+      const [labelTxt, extraCls] = statusLabels[record.chat_send_status] || [
+        `Chat: ${record.chat_send_status}`,
+        ''
+      ];
+      badges.appendChild(
+        el('span', `livestream-ai-popover-badge${extraCls}`, labelTxt)
       );
     }
 
@@ -574,13 +787,38 @@
       row.appendChild(chip);
     }
 
-    chip.title = `${record.sender}: ${record.text}`;
+    const statusSuffix =
+      record.chat_send_status === 'sent'
+        ? ' [Chat: Sent ✓]'
+        : record.chat_send_status === 'failed'
+          ? ' [Chat: Send Failed ⚠]'
+          : record.chat_send_status === 'blocked_or_restricted'
+            ? ' [Chat: Restricted ⛔]'
+            : record.chat_send_status === 'queued'
+              ? ' [Chat: Queued ⏳]'
+              : '';
+    chip.title = `${record.sender}: ${record.text}${statusSuffix}`;
 
-    chip.replaceChildren(
+    const chipChildren = [
       createAvatar(record.sender, record.avatarUrl),
       el('span', 'livestream-ai-chip-author', record.sender),
       el('span', 'livestream-ai-chip-text', record.text)
-    );
+    ];
+    if (record.chat_send_status) {
+      const iconMap = {
+        sent: '✓',
+        failed: '⚠',
+        blocked_or_restricted: '⛔',
+        queued: '⏳'
+      };
+      const statusBadge = el(
+        'span',
+        `livestream-ai-chip-status is-${record.chat_send_status}`,
+        iconMap[record.chat_send_status] || '•'
+      );
+      chipChildren.push(statusBadge);
+    }
+    chip.replaceChildren(...chipChildren);
 
     while (aiMessages.size > MAX_CHIPS) {
       const oldestId = aiMessages.keys().next().value;
@@ -609,10 +847,11 @@
     }
 
     const sender = node.querySelector('#author-name')?.innerText?.trim();
-    const text = node.querySelector('#message')?.innerText?.trim();
+    const text = extractCommentText(node.querySelector('#message'));
+    const authorType = node.getAttribute('author-type') || 'viewer';
 
     if (!sender || !text) return;
-    if (text.startsWith('🤖') || sentAiTexts.has(text)) return;
+    if (isBotOrEchoComment(node, text, authorType)) return;
 
     const rawId = node.id || `${sender}-${text}-${Date.now()}`;
     const id = rawId.replace(/[^A-Za-z0-9._@-]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 128) || `c_${Date.now()}`;
@@ -620,8 +859,6 @@
     if (seenIds.has(id)) return;
 
     seenIds.add(id);
-
-    const authorType = node.getAttribute('author-type') || 'viewer';
 
     const avatarUrl =
       node.querySelector('#author-photo img, #img')?.getAttribute('src') || '';
@@ -826,6 +1063,16 @@
       .querySelector(`#${PANEL_ID} .livestream-ai-menuitem[data-toggle="collector"]`)
       ?.setAttribute('aria-checked', String(isEnabled));
 
+    const chatCollectorBtn = document.querySelector(
+      `#${CHAT_TOOLBAR_ID} .livestream-ai-toolbar-toggle[data-toggle="collector"]`
+    );
+    if (chatCollectorBtn) {
+      chatCollectorBtn.setAttribute('aria-pressed', String(isEnabled));
+      chatCollectorBtn.textContent = isEnabled ? 'Collector: ON' : 'Collector: OFF';
+    }
+
+    ensureChatToolbar();
+
     if (isEnabled) {
       startChatCollection();
     } else if (changed) {
@@ -854,6 +1101,16 @@
     document
       .querySelector(`#${PANEL_ID} .livestream-ai-menuitem[data-toggle="auto-reply"]`)
       ?.setAttribute('aria-checked', String(isAutoReplyEnabled));
+
+    const chatAutoReplyBtn = document.querySelector(
+      `#${CHAT_TOOLBAR_ID} .livestream-ai-toolbar-toggle[data-toggle="auto-reply"]`
+    );
+    if (chatAutoReplyBtn) {
+      chatAutoReplyBtn.setAttribute('aria-pressed', String(isAutoReplyEnabled));
+      chatAutoReplyBtn.textContent = isAutoReplyEnabled ? 'Auto-Reply: ON' : 'Auto-Reply: OFF';
+    }
+
+    ensureChatToolbar();
 
     if (!isAutoReplyEnabled) {
       chatSendQueue.length = 0;
@@ -950,6 +1207,12 @@
   }
 
   syncSavedEnabledState();
+  ensureChatToolbar();
+  new MutationObserver(() => {
+    if (!document.getElementById(CHAT_TOOLBAR_ID) && document.querySelector('yt-live-chat-renderer')) {
+      ensureChatToolbar();
+    }
+  }).observe(document.documentElement, { childList: true, subtree: true });
 
   function addPlayerButton() {
     playerRaf = null;
@@ -1165,6 +1428,7 @@
 
     window.addEventListener('yt-navigate-finish', () => {
       syncSavedEnabledState();
+      ensureChatToolbar();
       schedule();
     });
 

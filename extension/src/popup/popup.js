@@ -21,16 +21,49 @@ function createNode(tag, props = {}, ...children) {
   return el;
 }
 
+function sendExtensionMessage(msg) {
+  return new Promise((resolve) => {
+    try {
+      chrome.runtime.sendMessage(msg, (res) => resolve(res || {}));
+    } catch (_) {
+      resolve({});
+    }
+  });
+}
+
 function mountPopupApp(rootEl) {
   let state = {
     health: null,
     summary: null,
     orders: [],
     comments: [],
+    collectorEnabled: false,
+    autoReplyEnabled: false,
+  };
+
+  const toggleCollector = async () => {
+    const next = !state.collectorEnabled;
+    state = { ...state, collectorEnabled: next };
+    render();
+    await sendExtensionMessage({ type: 'SET_ENABLED', enabled: next });
+  };
+
+  const toggleAutoReply = async () => {
+    const next = !state.autoReplyEnabled;
+    state = { ...state, autoReplyEnabled: next };
+    render();
+    await sendExtensionMessage({ type: 'SET_AUTO_REPLY', autoReply: next });
   };
 
   const render = () => {
-    const { health, summary, orders, comments } = state;
+    const {
+      health,
+      summary,
+      orders,
+      comments,
+      collectorEnabled,
+      autoReplyEnabled,
+    } = state;
     const view = createNode(
       'div',
       { className: 'popup-root' },
@@ -51,6 +84,50 @@ function mountPopupApp(rootEl) {
           'span',
           { className: `status-pill ${health ? 'online' : 'offline'}` },
           health ? 'Backend Online' : 'Offline'
+        )
+      ),
+      createNode(
+        'div',
+        {
+          className: 'card',
+          style: { display: 'flex', flexDirection: 'column', gap: '8px' },
+        },
+        createNode(
+          'div',
+          { className: 'stat-label' },
+          'YouTube Live Controls (Watch / Popout / Studio)'
+        ),
+        createNode(
+          'div',
+          { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' } },
+          createNode(
+            'button',
+            {
+              type: 'button',
+              className: 'btn',
+              style: {
+                background: collectorEnabled ? '#10b981' : '#334155',
+                padding: '8px 10px',
+                fontSize: '12px',
+              },
+              onClick: toggleCollector,
+            },
+            collectorEnabled ? 'Collector: ON' : 'Collector: OFF'
+          ),
+          createNode(
+            'button',
+            {
+              type: 'button',
+              className: 'btn',
+              style: {
+                background: autoReplyEnabled ? '#7c3aed' : '#334155',
+                padding: '8px 10px',
+                fontSize: '12px',
+              },
+              onClick: toggleAutoReply,
+            },
+            autoReplyEnabled ? 'Auto-Reply: ON' : 'Auto-Reply: OFF'
+          )
         )
       ),
       createNode(
@@ -151,6 +228,7 @@ function mountPopupApp(rootEl) {
 
   const refreshData = async () => {
     try {
+      const toggleRes = await sendExtensionMessage({ type: 'GET_ENABLED' });
       const [h, s, o, c] = await Promise.all([
         fetch(`${BACKEND_BASE}/health`).then((r) => r.json()),
         fetch(`${BACKEND_BASE}/api/plugin/summary`).then((r) => r.json()),
@@ -162,6 +240,14 @@ function mountPopupApp(rootEl) {
         summary: s,
         orders: o.items || [],
         comments: Array.isArray(c) ? c : [],
+        collectorEnabled:
+          typeof toggleRes.enabled === 'boolean'
+            ? toggleRes.enabled
+            : state.collectorEnabled,
+        autoReplyEnabled:
+          typeof toggleRes.autoReply === 'boolean'
+            ? toggleRes.autoReply
+            : state.autoReplyEnabled,
       };
     } catch (_) {
       state = { ...state, health: null };
